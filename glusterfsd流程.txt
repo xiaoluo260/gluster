@@ -336,6 +336,12 @@ struct xlator{
 	设置缺省的参数（参数的意义保留）
 	设置进程资源不受限制
 6.parse_cmdline (argc, argv, ctx)
-		
-	
+	process_mode = gf_get_process_mode (argv[0])根据入参决定是哪种模式	
+	#define GF_SERVER_PROCESS   0
+	#define GF_CLIENT_PROCESS   1
+	#define GF_GLUSTERD_PROCESS 2
+	针对模式的不同将 gluster*.vol 赋给cmd_args->volfile，将volfile的文件状态获取赋给stbuf结构体（run_id为空，因此直接返回）
+7.logging_init()
+	根据参数设置不同的log 文件路径和名称,log等级，刷新超时等
+	gf_log_init (ctx, cmd_args->log_file, cmd_args->log_ident）打开log文件获取句柄，其中log_file=var/log/glusterfs/glusterd.log,log_ident=glusterd
 	

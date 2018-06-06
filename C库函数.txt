@@ -47,5 +47,6 @@
 　　	rlim_t rlim_cur;　　//soft limit
 	　　rlim_t rlim_max;　　//hard limit
 	};soft limit是指内核所能支持的资源上限，hard limit在资源中只是作为soft limit的上限。当你设置hard limit后，你以后设置的soft limit只能小于hard limit。例如一般RLIMIT_NOFILE的rlim_cur=1024
+6.strdup（char *）拷贝一个副本，并返回副本地址
 	
 		
