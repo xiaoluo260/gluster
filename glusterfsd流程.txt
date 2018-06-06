@@ -1,0 +1,341 @@
+glusterfsd.c详细流程梳理
+1.定义一个ctx的结构体
+struct glusterfs_ctx{
+	cmd_args_t cmd_args;
+	char		*process_uuid;//由时间和主机组成的识别码
+	FILE		*pidfp;//glusterd.vol
+	char		fin;
+	void		*time;
+	void		*ib;
+	struct call_pool	*pool;
+	void		*event_pool;
+	void		*iobuf_pool;
+	void		*logbuf_pool;
+	gf_lock_t	lock;
+	size_t		page_size;//iobuf的大小128k
+	struct list_head	graph;//graph的链接头
+	glusterfs_graph_t	*active;//最新的graph
+	void		*master;//fuse
+	void		mgmt;//指向某一个xlator
+	void		*listener;//命令的接听口
+	unsigned char	measure_latency;//延时测量的开关
+	pthread_t	sigwaiter;
+	char		*cmdlinestr;
+	struct mem_pool	*stub_mem_pool;
+	unsigned char	cleanup_started;
+	int 		graph_id;
+	pid_t		mnt_pid; //mount agent的pid
+	int 		process_mode;//三种模式的选择
+	struct syncenv	*env; //同步任务的env指针
+	struct list_head	mempool_list;
+	char		*statedump_path;
+	struct mem_pool		*dict_pool;  //某种类型的内存池
+	struct mem_pool		*dict_pair_pool;
+	struct mem_pool		*dict_data_pool;
+	glusterfsd_mgmt_event_notify_fn_t	notify;
+	gf_log_handle_t		log;//log的相关变量
+	int 		mem_acct_enable;
+	int 		daemon_pipe[2];
+	struct clienttable	*clienttable;
+	int			secure_mgmt;
+	mgmt_ssl_t	secure_srvr;
+	char		btbuf[GF_BACKTRACE_LEN];//4096
+	pthread_mutex_t		notify_lock;
+	pthread_cond_t		notify_cond;
+	int			notifying;
+	struct tvec_base	*timer_wheel;//定时器轮训实例	
+}
+struct xlator{
+	char		*name;
+	char		*type;
+	char		*instance_name;
+	xlator_t	*next;
+	xlator_t	*prev;
+	xlator_list_t	parents;
+	xlator_list_t	children;
+	dict_t		*options;
+	//以下参数设置在dlopen中
+	void		*dlhandle;
+	struct xlator_fops	*fops;
+	struct xlator_cbks	*cbks;
+	struct xlator_dumpops	*dumpops;
+	struct list_head	volume_options;
+	
+	void		(*fini)(xlator_t *this);
+	int32_t		(*init)(xlator_t *this);
+	int32_t		(*reconfigure)(xlator_t *this,dict_t *options);
+	int32_t		(*mem_acct_init)(xlator_t *this);
+	event_notify_fn_t	notify;
+	gf_loglevel_t	loglevel;
+	fop_latency_t	latencies[GF_FOP_MAXVALUE];
+	
+	//misc
+	eh_t		*history;
+	glusterfs_ctx_t		*ctx;
+	glusterfs_graph_t 	*graph;
+	inode_table_t		*itable;
+	char		init_succeeded;
+	void		*private;
+	struct mem_acct		*mem_acct;
+	uint64_t	winds;
+	char		switched;
+	
+	//memory pool of frame->local
+	struct mem_pool 	*local_pool;
+	gf_boolean_t		is_autoloaded;
+	char		*volfile_id;
+	uint32_t	xl_id; //inode_ctx index
+	
+}
+2.glusterfs_ctx_new//申请堆内存
+3.glusterfs_globals_init(ctx)//
+	ctx的log等级初始化为GF_LOG_INFO,其中涉及log.gf_log_syslog,sys_log_level,logger,logformat,time_out；
+	初始化log中log_buf的线程互斥锁；
+	调用一次gf初始化，
+		xlator的name,type,list_head
+		uuid_buf_key，lkowner,leaseid,synctask,syncopctx(多线程私有数据)
+4.THIS是全局的 获取了xlator键对应的线程值后返回的xlator指针地址，此时将之前的ctx付给它的ctx
+5.glusterfs_ctx_defaults_init();
+	申请mem_acct内存，设置它的num_type等参数
+	设置process_uuid 
+	设置page_size=128kb
+	创建一个总大小为8兆大小，每页128个字节的io内存池iobuf_pool
+		struct iobuf_pool{
+			pthread_mutex_t	mutex;
+			size_t			arena_size;
+			size_t			default_page_size;//128kb
+			int				arena_cnt;
+			struct list_head	all_arenas; //所有的arena双循环链表
+			struct list_head	arenas[GF_VARIABLE_IOBUF_COUNT]; //8 保存了所有arena的list
+			struct list_head	filled[GF_VARIABLE_IOBUF_COUNT];//已填满的arena
+			struct list_head	purge[GF_VARIABLE_IOBUF_COUNT]; //可以被清空的arena
+			uint64_t		request_misses;
+			int				rdma_device_count;
+			struct list_head	*mr_list[GF_RDMA_DEVICE_COUNT]; //8 NULL
+			void			*device[GF_RDMA_DEVICE_COUNT];  //8 NULL
+			int (*rdma_registration)(void **,void *);
+			int (*rdma_deregistration)(struct list_head**,struct iobuf_arena *); //NULL
+		}
+		struct iobuf_init_config gf_iobuf_init_config[] = {
+        /* { pagesize, num_pages }, */
+        {128, 1024},
+        {512, 512},
+        {2 * 1024, 512},
+        {8 * 1024, 128},
+        {32 * 1024, 64},
+        {128 * 1024, 32},
+        {256 * 1024, 8},
+        {1 * 1024 * 1024, 2},
+		};
+		iobuf_pool_add_arena (iobuf_pool, page_size, num_pages)将上面8组pagesize和num_pages循环创建arena（8次）
+			尝试回收该page_size的arena ：__iobuf_arena_unprune
+			如果没有可回收的arena直接申请__iobuf_arena_alloc
+			struct iobuf_arena{
+				union{
+					struct list_head	list;
+					struct{
+						struct iobuf_arena	*next;
+						struct iobuf_arena	*prev;
+					}
+				}
+				struct list_head	all_list; //添加在iobuf_pool的arena中
+				size_t		page_size;
+				size_t		arena_size;   //page_count*page_size
+				size_t		page_count;
+				struct iobuf_pool	*iobuf_pool;
+				void		*mem_base;
+				struct iobuf		*iobuf;
+				int 		active_cnt;
+				struct iobuf 		active;
+				int			passive_cnt;
+				struct iobuf	passive; //添加了iobuf的list
+				uint64_t	alloc_cnt;
+				int		max_active;
+			}
+			struct iobuf{
+				union{
+					struct list_head	list;
+					struct{
+						struct iobuf	*next;
+						struct iobuf	*prev;
+					}
+				}
+				struct iobuf_arena	*iobuf_arena;
+				gf_lock_t		lock;
+				int				ref;
+				void			*ptr;
+				void			*free_ptr;
+			}
+				申请arena时同样先初始化所有的list包括它其中iobuf的list，
+				计算出arena_size=page_count*page_size,mmap(arena_size)的内存
+				判断有无rdma_registration函数，有则执行 （待详细查阅）
+				将iobuf_arena中的all_list加入到iobuf_pool中的all_arenas双循环链表中
+				__iobuf_arena_init_iobufs对该内存区域进行配置分页
+					申请page_count个sizeof(*iobuf)循环page_count次处理每个ioubf
+					初始化list，lock，将iobuf中的arena指向自身所属的arena
+					将此iobuf的list加到erana的passive.list
+					offset+=page_size,ptr是每个iobuf的首地址，一直在偏移
+					完成 iobuf指针++移动一次（一共page_count次）
+				arena_cnt++一次（总共将会8次）
+				将此arena的list指向到iobuf_pool中的arena[index]
+				总arena_size增加此arena的大小（page_count*page_size）
+			循环创建arena完毕，获取到了总arena_size的大小，然后多申请一个arena指针，其page_size=1G，将此arena的list也加到iobuf_pool的arena[8]上（作用未知）	
+	
+	创建事件池event_pool_new
+		struct event_pool{
+			struct event_ops	*ops;
+			int			fd;
+			int			breaker[2];
+			int			count;
+			struct event_slot_poll	*reg;
+			struct event_slot_epoll *ereg[EVENT_EPOLL_TABLES]; //1024
+			int			slots_used[EVENT_EPOLL_TABLES]; //1024
+			int 		used;
+			int			changed;
+			pthread_mutex_t	mutex;
+			pthread_cond_t	cond;
+			void		*evcache;
+			int			evcache_size;
+			// only in epoll
+			int			eventthreadcount;	//初始为1
+			pthread_t 	pollers[EVENT_MAX_THREADS]; //1024
+			int			destroy;
+			int			activethreadcount;
+			int			auto_thread_count; //主要是server模式的时候会针对多个brick设置extra的线程数去处理请求
+		}
+		在此有个event_ops操作函数集,赋值给ops
+		struct event_ops{
+			struct event_pool * (*new)(int count,int eventthreadcount)'
+			int (*event_register) (struct event_pool *event_pool,int fd,event_handler_t handler,void *data,int poll_in,int poll_out);
+			int (*event_select_on) (struct event_pool *event_pool,int fd,int idx,int poll_in,int poll_out);
+			int (*event_unregister) (struct event_pool *event_pool,int fd,int idx,int poll_in,int poll_out);
+			int (*event_unregister_close) (struct event_pool *event_pool,int fd,int idx);
+			int (*event_dispatch) (struct event_pool *event_pool);
+			int (*event_reconfigure_threads) (struct event_pool *event_pool,int newcount);
+			int (*event_pool_destory) (struct event_pool *event_pool);
+		}
+		创建处理16384个事件的监听端口，把此句柄赋给fd，eventthreadcount=1，auto_thread_count=0；
+	
+	创建内存池
+		//用来记录每一类池子的大小（一共有14个此结构体，都会赋给pre_thread_pool_list->pools[]），同时记录各种操作的次数，用来检测使用情况及趋势分析，它并不存储实际的内存池链表
+		struct mem_pool{
+			unsigned	power_of_two;
+			unsigned	allocs_hot; //pthread_pool中的热链表计数
+			unsigned	allocs_cold;
+			unsigned	allocs_stdc;
+			unsigned	frees_to_list;
+		}
+		同时创建一组全局变量说明内存池
+		static pthread_key_t	pool_key; //每个线程有自己的per_thread_pool_list_t  *pool_list
+		static pthread_mutex_t	pool_lock=PTHREAD_MUTEX_INITIALIZER; //静态初始化互斥锁
+		static struct list_head pool_threads;	//将每个线程的pool_list头链接在一起
+		static pthread_mutex_t  pool_free_lock  = PTHREAD_MUTEX_INITIALIZER;
+		static struct list_head pool_free_threads;  //空闲的list头
+		static struct mem_pool  pools[NPOOLS];  //一共14个类型
+		static size_t           pool_list_size; // pool_list的长度？
+		
+		//每个线程保存一个链表，头是per_pthread_pool_list结构，后面跟着14个per_pthread_pool结构，也就是说每个线程有14中内存池
+		typedef struct per_thread_pool_list{
+			struct list_head	thr_list;
+			unsigned			poison;
+			pthread_spinlock_t	lock;   //在申请list的时候会初始化为PTHREAD_PROCESS_PRIVATE：表示只能被初始化线程所属的进程中的线程共享
+			per_thread_pool_t	pools[1];//此处虽然是1，但实际代码中应为13
+		}per_thread_pool_list_t;
+		
+		typedef struct per_thread_pool{
+			struct mem_pool		*parent;	//指向对应的mem_pool结构体
+			pooled_obj_hdr_t	*hot_list; //热链表 正在使用的池链表 初始化均为NULL
+			pooled_obj_hdr_t	*cold_list;//冷链表 暂时空闲的池链表
+		}per_thread_pool_t;
+		
+		typedef struct pooled_obj_hdr_t
+		{
+			unsigned long		magic;  //0xCAFEBABE
+			struct pooled_obj_hdr_t	*next; //NULL
+			struct per_thread_pool_list *pool_list;
+			unsigned int		power_of_two;  //mem->power_of_two
+		}
+		每个需要内存池的地方使用mem_pool_new(type,count)来生成线程池基本信息mem_pool,当需要使用内存的时候调用mem_get0(struct mem_pool *mem_pool)来获取内存块，具体如下：
+			它调用的是mem_get(mem_pool),首先申请内存头pre_thread_pool_list,根据pool_key（全局）利用（一键多值）pthread_getspecific获取当前线程的键值,申请pool_list_size（全局）大小的内存块，给其中的成员赋值；将pool_list->thr_list加到全局变量pool_threads中去（每个线程都会加入）,最后利用pthread_setspecific (pool_key, pool_list)将添加线程键值（私有）
+		之后从pool_list列表中找到指定大小的per_thread_pool_t *pt_pool赋给pt_pool
+		 mem_get_from_pool (pt_pool) 初始化内存块，当是热链表时返回热，并对计数+1，当是冷链表时返回冷，计数+1
+		 返回的链表pooled_obj_hdr_t开始赋值，
+		
+		创建pool对象，初始化它的list（all_frame）、互斥锁，然后申请它的两个mem_pool对象
+			struct call_pool{
+			union{
+				sturct list_head all_frames;
+				struct{
+					call_stack_t *next_call;
+					call_stack_t *prev_call;
+				}all_stacks;
+			}
+			int64_t		cnt;
+			gf_lock_t	lock;
+			struct mem_pool		*frame_mem_pool;
+			struct mem_pool		*stack_mem_pool;
+			}
+			struct call_frame_t{
+				call_stack_t *root;
+				call_frame_t *parent;
+				struct list_head	frames;
+				void		*local;
+				xlator_t	*this;
+				ret_fn_t	ret;
+				int32_t		ref_count;
+				gf_lock_t	lock;
+				void		*cookie;
+				gf_boolean_t	complete;
+				glusterfs_fop_t	op;
+				struct timeval	begin;
+				struct timeval 	end;
+				const char		*wind_from;
+				const char		*wind_to;
+				const char		*unwind_from;
+				const char		*unwind_to;
+			}
+			struct call_stack_t{
+				union{
+					struct list_head	all_frames;
+					struct{
+						call_stack_t	*next_call;
+						call_stack_t	*prev_call;
+					}
+				}
+				call_pool_t		*pool;
+				gf_lock_t		stack_lock; //互斥锁
+				client_t		*client;
+				uint64_t		unique;
+				void			*state;
+				uid_t			uid;
+				gid_t			gid;
+				pid_t			pid; //unsigned int
+				char			identifier[UNIX_PATH_MAX];//108
+				uint16_t		ngrps;
+				uint32_t		groups_small[SMALL_GROUP_COUNT]; //128
+				uint32_t		*group_large;
+				uint32_t		*group;
+				gf_lknower_t	lk_owner;
+				glusterfs_ctx_t	*ctx;
+				struct list_head	myframe;
+				int32_t			op;
+				int8_t			type;
+				struct timeval	tv;
+				xlator_t		*err_xl;
+				int32_t			error;
+			}
+			申请4096个call_frame_t类型的内存池并赋给pool->frame_mem_pool;
+			申请1024个call_stack_t类型的内存池并赋给pool->stack_mem_pool;	
+		申请1024个call_stub_t类型的内存池给ctx->stub_mem_pool
+		申请4096个dict_t的内存池给ctx->dict_pool
+		申请4096*4个data_pair_t的内存池给ctx->dict_pair_pool;
+		申请4096*4个data_t的内存池给ctx->dict_data_pool
+		申请256个log_buf_t的内存池给ctx->logbuf_pool
+		初始化条件变量和互斥锁
+	
+	设置缺省的参数（参数的意义保留）
+	设置进程资源不受限制
+6.parse_cmdline (argc, argv, ctx)
+		
+	
+	

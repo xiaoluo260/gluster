@@ -1,0 +1,51 @@
+1.pthread
+	pthread_create()创建线程
+	pthread_exit()	终止线程
+	pthread_join()	阻塞当前线程
+	pthread_attr_init()	初始化线程属性
+	pthread_attr_setdetachstate()	设定脱离状态的属性
+	pthread_attr_getdetachstate()	获取脱离状态的属性
+	pthread_attr_destory()	删除线程的属性
+	pthread_kill()	发送信号
+	pthread_mutex_init()	初始化互斥锁
+	pthread_mutex_destory()
+	pthread_mutex_lock()	占用互斥锁
+	pthread_mutex_unlock()
+	pthread_cond_init()		初始化条件变量
+	pthread_cond_wait()		等待条件变量的事件发生
+	pthread_cond_signal()	唤醒调用wait的线程
+	pthread_setspecific()	特定绑定线程键
+	pthread_getspecific()	获取线程的键
+	pthread_attr_setschedparam()	设置线程优先级
+	pthread_attr_getschedparam()	获取线程优先级
+	pthread_equal()		对两个线程标识号进行比较
+	pthread_detach()	分离线程
+	pthread_self()		查自身的线程标识号
+	int pthread_once(pthread_once_t *once_control, void (*init_routine) (void))：用来控制多线程中init_routine函数只会执行一次，once_control是否执行过的标志，它的值有NEVER(0)IN_PROGRESS(1)DONE(2)三种，默认是初始是0
+	pthread_key_create(pthread_ket_t *key,void(*destructor)(void*));	多线程私有数据：线程私有数据采用了一键多值的技术，各线程访问时访问同一个键值，但是需要往key中填入不同的值，第二个参数是线程结束时调用此参数来释放绑定在此key上的值
+	OSSpinLock 自旋锁（bug：线程有不同的优先级，高优先级总比低优先级的线程提前执行，高优先级的线程不会受到比他低的线程干扰，这种算法就会和自旋锁冲突，具体如当低优先级的线程获得自旋锁时，此时高优先级的线程也尝试获得这个锁，它会处于忙等状态而占用大量CPU，而低优先级的线程无法与高优先级的线程争夺CPU时间而导致任务迟迟不能完成，从而无法释放锁）
+2。mmap
+	void *mmap(void *start, size_t length, int prot, int flags,int fd, off_t offset);
+	stat映射区的开始地址；length映射区的长度；port该内存的保护标志；
+	flags指定映射区的类型：
+		MAP_PRIVATE//私有映射，内存的写入不会影响原文件
+		MAP_ANONYMOUS //匿名映射，映射区不与任何文件关联
+	fd有效的文件描述符，如果MAP_ANONYMOUS被设定，为了兼容问题，其值应为-1
+	offset被映射对象内容的起点
+	操作成功时返回映射区的指针
+3.event
+4.__sync_fetch_and_add(先返回再自加)-原子操作函数，针对多线程共有数据，不需要加锁，效率较高，但只适合小数据
+	__sync_add_and_fetch
+	该系列有12个函数，加减与或异或等
+5.setrlimit (RLIMIT_CORE, &lim)
+	RLIMIT_CODE:内核转存文件的最大长度
+	RLIMIT_AS:进程的最大虚内存空间
+	RLIMIT_CPU：最大允许CPU使用时间
+	RLIMIT_NPROC：用户可用有的最大进程数
+	RLIMIT_NOFILE ：指定比进程可打开的最大文件个数
+	struct rlimit {
+　　	rlim_t rlim_cur;　　//soft limit
+	　　rlim_t rlim_max;　　//hard limit
+	};soft limit是指内核所能支持的资源上限，hard limit在资源中只是作为soft limit的上限。当你设置hard limit后，你以后设置的soft limit只能小于hard limit。例如一般RLIMIT_NOFILE的rlim_cur=1024
+	
+		
