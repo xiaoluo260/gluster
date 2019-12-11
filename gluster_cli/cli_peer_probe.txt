@@ -1,0 +1,38 @@
+cli_input_init (&state)
+创建子线程处理cli_input（state）
+1. word->cbkfn (state, word, (const char **)argv, argc)，此处调试peer status对应函数：cli_cmd_peer_probe_cbk()
+	1.1 proc = &cli_rpc_prog->proctable[GLUSTER_CLI_DEPROBE];//找到对应的函数 gf_cli_deprobe
+	1.2 申请dict数据结构，存储 "hostname", (char *)words[2]
+	1.3 valid_internet_address 验证ip地址格式
+	1.4 如果最后一个参数是force 则置flags=1,并将其存到dict中
+	1.5 fn (frame, THIS, dict)即gf_cli_deprobe
+	 1.5.1 设置dict  port：24007
+	 1.5.2 cli_to_glusterd (&req, frame, gf_cli_deprobe_cbk,(xdrproc_t)xdr_gf_cli_req, dict,GLUSTER_CLI_DEPROBE, this, cli_rpc_prog, NULL)
+		1.5.2.1 将命令字串拼接给cmd，存在dict "cmd-str"：cmd
+		1.5.2.2 dict_allocate_and_serialize (dict, &(req->dict).dict_val,&(req->dict).dict_len),   返回0
+			dict_val = data个数+(key+value)+(第二个data)
+			dict_len = data个数(4字节)+(key长度(4)+value长度(4))+(第二个data)
+		1.5.2.3 cli_cmd_submit (NULL, req, frame, prog, procnum, iobref, this,cbkfn, (xdrproc_t) xdrproc)
+			参数说明： prog=cli_rpc_prog, procnum=GLUSTER_CLI_DEPROBE,ioburef=NULL,cbkfn=gf_cli_deprobe_cbk,xdrproc=xdr_gf_cli_req
+			1.5.2.3.1 cli_submit_request (rpc, req, frame, prog,procnum, NULL, this, cbkfn, xdrproc)
+				1.xdr_sizeof (xdrproc, req);//临时定义一个xdr，将数据编码写入，返回数据长度，用来判断申请的iobuf的大小
+				2.根据大小申请iobuf，并链在iobref中
+				1.xdr_serialize_generic (iov, req, xdrproc)  使用iov定义的内存空间，将req相关信息编码写到xdr，消息一直保存
+				2.rpc_clnt_submit (rpc, prog, procnum, cbkfn,&iov, count,NULL, 0, iobref, frame, NULL, 0, NULL, 0, NULL)
+					2.1 rpc_clnt_record
+					2.2 pc_transport_submit_request (conn->trans, &req)
+						trans->ops->submit_request =socket_submit_request() 提交req请求
+						2.2.1  新申请struct ioq  *entry；计算req中三个iovec的长度给size
+						2.2.2 __socket_ioq_churn_entry (this, entry, 1)
+							2.2.2.1 __socket_writev向对应sock写entry->pendiovec中的数据
+						（此流程正常未走到）2.2.3 sys_write (priv->pipe[1], &a_byte, 1)???作用未知，
+2. 主线程：event_dispatch (ctx->event_pool)
+	2.1 pthread_create (&t_id, NULL,event_dispatch_epoll_worker,ev_data)
+		子线程2.1.1 epoll_wait (event_pool->fd, &event, 1, -1)
+		2.1.2 socket_event_handler (int fd, int idx, void *data,int poll_in, int poll_out, int poll_err)
+			检测和glusterd链接的端口，当返回数据时走epoll_in标志，将数据接收（glusterd处理的结果,当数据流是epollout时，不做处理，因为之前消息已经发送）
+
+							
+						
+							
+							

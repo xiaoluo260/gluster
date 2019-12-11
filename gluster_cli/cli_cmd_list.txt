@@ -1,0 +1,325 @@
+消息格式
+ * Serialization format:
+ *  -------- --------  --------  ----------- ------------- --------- --------  --------  -------
+ * |  count | key len | val len | key     \0| value			|key len| val len  |key \0 | value
+ *  ---------------------------------------- ------------- --------- --------  --------  -------
+ *     4        4         4       <key len>   <value len>      4         4        
+ */
+
+#define DICT_HDR_LEN               4
+#define DICT_DATA_HDR_KEY_LEN      4
+#define DICT_DATA_HDR_VAL_LEN      4
+
+
+cli_rpc_prog = &cli_prog;
+struct rpc_clnt_program cli_prog = {
+        .progname  = "Gluster CLI",
+        .prognum   = GLUSTER_CLI_PROGRAM,
+        .progver   = GLUSTER_CLI_VERSION,
+        .numproc   = GLUSTER_CLI_MAXVALUE,
+        .proctable = gluster_cli_actors,
+};
+enum gf_probe_resp {
+	GF_PROBE_SUCCESS,
+	GF_PROBE_LOCALHOST,
+	GF_PROBE_FRIEND,
+        GF_PROBE_ANOTHER_CLUSTER,
+        GF_PROBE_VOLUME_CONFLICT,
+        GF_PROBE_SAME_UUID,
+        GF_PROBE_UNKNOWN_PEER,
+        GF_PROBE_ADD_FAILED,
+        GF_PROBE_QUORUM_NOT_MET,
+        GF_PROBE_MISSED_SNAP_CONFLICT,
+        GF_PROBE_SNAP_CONFLICT,
+        GF_PROBE_FRIEND_DETACHING,
+};
+struct rpc_clnt_procedure gluster_cli_actors[GLUSTER_CLI_MAXVALUE] = {
+        [GLUSTER_CLI_NULL]             = {"NULL", NULL },
+        [GLUSTER_CLI_PROBE]            = {"PROBE_QUERY", gf_cli_probe},
+        [GLUSTER_CLI_DEPROBE]          = {"DEPROBE_QUERY", gf_cli_deprobe},
+        [GLUSTER_CLI_LIST_FRIENDS]     = {"LIST_FRIENDS", gf_cli_list_friends},
+        [GLUSTER_CLI_UUID_RESET]       = {"UUID_RESET", gf_cli3_1_uuid_reset},
+        [GLUSTER_CLI_UUID_GET]         = {"UUID_GET", gf_cli3_1_uuid_get},
+        [GLUSTER_CLI_CREATE_VOLUME]    = {"CREATE_VOLUME", gf_cli_create_volume},
+        [GLUSTER_CLI_DELETE_VOLUME]    = {"DELETE_VOLUME", gf_cli_delete_volume},
+        [GLUSTER_CLI_START_VOLUME]     = {"START_VOLUME", gf_cli_start_volume},
+        [GLUSTER_CLI_STOP_VOLUME]      = {"STOP_VOLUME", gf_cli_stop_volume},
+        [GLUSTER_CLI_RENAME_VOLUME]    = {"RENAME_VOLUME", gf_cli_rename_volume},
+        [GLUSTER_CLI_DEFRAG_VOLUME]    = {"DEFRAG_VOLUME", gf_cli_defrag_volume},
+        [GLUSTER_CLI_GET_VOLUME]       = {"GET_VOLUME", gf_cli_get_volume},
+        [GLUSTER_CLI_GET_NEXT_VOLUME]  = {"GET_NEXT_VOLUME", gf_cli_get_next_volume},
+        [GLUSTER_CLI_SET_VOLUME]       = {"SET_VOLUME", gf_cli_set_volume},
+        [GLUSTER_CLI_ADD_BRICK]        = {"ADD_BRICK", gf_cli_add_brick},
+        [GLUSTER_CLI_REMOVE_BRICK]     = {"REMOVE_BRICK", gf_cli_remove_brick},
+        [GLUSTER_CLI_REPLACE_BRICK]    = {"REPLACE_BRICK", gf_cli_replace_brick},
+        [GLUSTER_CLI_LOG_ROTATE]       = {"LOG ROTATE", gf_cli_log_rotate},
+        [GLUSTER_CLI_GETSPEC]          = {"GETSPEC", gf_cli_getspec},
+        [GLUSTER_CLI_PMAP_PORTBYBRICK] = {"PMAP PORTBYBRICK", gf_cli_pmap_b2p},
+        [GLUSTER_CLI_SYNC_VOLUME]      = {"SYNC_VOLUME", gf_cli_sync_volume},
+        [GLUSTER_CLI_RESET_VOLUME]     = {"RESET_VOLUME", gf_cli_reset_volume},
+        [GLUSTER_CLI_FSM_LOG]          = {"FSM_LOG", gf_cli_fsm_log},
+        [GLUSTER_CLI_GSYNC_SET]        = {"GSYNC_SET", gf_cli_gsync_set},
+        [GLUSTER_CLI_PROFILE_VOLUME]   = {"PROFILE_VOLUME", gf_cli_profile_volume},
+        [GLUSTER_CLI_QUOTA]            = {"QUOTA", gf_cli_quota},
+        [GLUSTER_CLI_TOP_VOLUME]       = {"TOP_VOLUME", gf_cli_top_volume},
+        [GLUSTER_CLI_GETWD]            = {"GETWD", gf_cli_getwd},
+        [GLUSTER_CLI_STATUS_VOLUME]    = {"STATUS_VOLUME", gf_cli_status_volume},
+        [GLUSTER_CLI_STATUS_ALL]       = {"STATUS_ALL", gf_cli_status_volume_all},
+        [GLUSTER_CLI_MOUNT]            = {"MOUNT", gf_cli_mount},
+        [GLUSTER_CLI_UMOUNT]           = {"UMOUNT", gf_cli_umount},
+        [GLUSTER_CLI_HEAL_VOLUME]      = {"HEAL_VOLUME", gf_cli_heal_volume},
+        [GLUSTER_CLI_STATEDUMP_VOLUME] = {"STATEDUMP_VOLUME", gf_cli_statedump_volume},
+        [GLUSTER_CLI_LIST_VOLUME]      = {"LIST_VOLUME", gf_cli_list_volume},
+        [GLUSTER_CLI_CLRLOCKS_VOLUME]  = {"CLEARLOCKS_VOLUME", gf_cli_clearlocks_volume},
+        [GLUSTER_CLI_COPY_FILE]        = {"COPY_FILE", gf_cli_copy_file},
+        [GLUSTER_CLI_SYS_EXEC]         = {"SYS_EXEC", gf_cli_sys_exec},
+        [GLUSTER_CLI_SNAP]             = {"SNAP", gf_cli_snapshot},
+        [GLUSTER_CLI_BARRIER_VOLUME]   = {"BARRIER VOLUME", gf_cli_barrier_volume},
+        [GLUSTER_CLI_GANESHA]          = {"GANESHA", gf_cli_ganesha},
+        [GLUSTER_CLI_GET_VOL_OPT]      = {"GET_VOL_OPT", gf_cli_get_vol_opt},
+        [GLUSTER_CLI_BITROT]           = {"BITROT", gf_cli_bitrot},
+        [GLUSTER_CLI_ATTACH_TIER]      = {"ATTACH_TIER", gf_cli_attach_tier},
+        [GLUSTER_CLI_TIER]             = {"TIER", gf_cli_tier},
+        [GLUSTER_CLI_GET_STATE]        = {"GET_STATE", gf_cli_get_state},
+        [GLUSTER_CLI_RESET_BRICK]      = {"RESET_BRICK", gf_cli_reset_brick},
+        [GLUSTER_CLI_REMOVE_TIER_BRICK] = {"DETACH_TIER", gf_cli_remove_tier_brick}
+};
+
+enum gluster_cli_procnum {
+        GLUSTER_CLI_NULL,    /* 0 */
+        GLUSTER_CLI_PROBE,
+        GLUSTER_CLI_DEPROBE,
+        GLUSTER_CLI_LIST_FRIENDS,
+        GLUSTER_CLI_CREATE_VOLUME,
+        GLUSTER_CLI_GET_VOLUME,
+        GLUSTER_CLI_GET_NEXT_VOLUME,
+        GLUSTER_CLI_DELETE_VOLUME,
+        GLUSTER_CLI_START_VOLUME,
+        GLUSTER_CLI_STOP_VOLUME,
+        GLUSTER_CLI_RENAME_VOLUME,
+        GLUSTER_CLI_DEFRAG_VOLUME,
+        GLUSTER_CLI_SET_VOLUME,
+        GLUSTER_CLI_ADD_BRICK,
+        GLUSTER_CLI_REMOVE_BRICK,
+        GLUSTER_CLI_REPLACE_BRICK,
+        GLUSTER_CLI_LOG_ROTATE,
+        GLUSTER_CLI_GETSPEC,
+        GLUSTER_CLI_PMAP_PORTBYBRICK,
+        GLUSTER_CLI_SYNC_VOLUME,
+        GLUSTER_CLI_RESET_VOLUME,
+        GLUSTER_CLI_FSM_LOG,
+        GLUSTER_CLI_GSYNC_SET,
+        GLUSTER_CLI_PROFILE_VOLUME,
+        GLUSTER_CLI_QUOTA,
+        GLUSTER_CLI_TOP_VOLUME,
+        GLUSTER_CLI_GETWD,
+        GLUSTER_CLI_STATUS_VOLUME,
+        GLUSTER_CLI_STATUS_ALL,
+        GLUSTER_CLI_MOUNT,
+        GLUSTER_CLI_UMOUNT,
+        GLUSTER_CLI_HEAL_VOLUME,
+        GLUSTER_CLI_STATEDUMP_VOLUME,
+        GLUSTER_CLI_LIST_VOLUME,
+        GLUSTER_CLI_CLRLOCKS_VOLUME,
+        GLUSTER_CLI_UUID_RESET,
+        GLUSTER_CLI_UUID_GET,
+        GLUSTER_CLI_COPY_FILE,
+        GLUSTER_CLI_SYS_EXEC,
+        GLUSTER_CLI_SNAP,
+        GLUSTER_CLI_BARRIER_VOLUME,
+        GLUSTER_CLI_GET_VOL_OPT,
+        GLUSTER_CLI_GANESHA,
+        GLUSTER_CLI_BITROT,
+        GLUSTER_CLI_ATTACH_TIER,
+        GLUSTER_CLI_TIER,
+        GLUSTER_CLI_GET_STATE,
+        GLUSTER_CLI_RESET_BRICK,
+        GLUSTER_CLI_REMOVE_TIER_BRICK,
+        GLUSTER_CLI_MAXVALUE,
+};
+struct cli_cmd volume_cmds[] = {
+        { "volume info [all|<VOLNAME>]",
+          cli_cmd_volume_info_cbk,
+          "list information of all volumes"},
+
+        { "volume create <NEW-VOLNAME> [stripe <COUNT>] "
+          "[replica <COUNT> [arbiter <COUNT>]] "
+          "[disperse [<COUNT>]] [disperse-data <COUNT>] [redundancy <COUNT>] "
+          "[transport <tcp|rdma|tcp,rdma>] <NEW-BRICK>"
+#ifdef HAVE_BD_XLATOR
+          "?<vg_name>"
+#endif
+          "... [force]",
+
+          cli_cmd_volume_create_cbk,
+          "create a new volume of specified type with mentioned bricks"},
+
+        { "volume delete <VOLNAME>",
+          cli_cmd_volume_delete_cbk,
+          "delete volume specified by <VOLNAME>"},
+
+        { "volume start <VOLNAME> [force]",
+          cli_cmd_volume_start_cbk,
+          "start volume specified by <VOLNAME>"},
+
+        { "volume stop <VOLNAME> [force]",
+          cli_cmd_volume_stop_cbk,
+          "stop volume specified by <VOLNAME>"},
+
+        /*{ "volume rename <VOLNAME> <NEW-VOLNAME>",
+          cli_cmd_volume_rename_cbk,
+          "rename volume <VOLNAME> to <NEW-VOLNAME>"},*/
+
+#if !defined(__NetBSD__)
+        { "volume tier <VOLNAME> status\n"
+        "volume tier <VOLNAME> start [force]\n"
+        "volume tier <VOLNAME> stop\n"
+        "volume tier <VOLNAME> attach [<replica COUNT>] <NEW-BRICK>... [force]\n"
+        "volume tier <VOLNAME> detach <start|stop|status|commit|[force]>\n",
+        cli_cmd_volume_tier_cbk,
+        "Tier translator specific operations."},
+
+        { "volume attach-tier <VOLNAME> [<replica COUNT>] <NEW-BRICK>...",
+        cli_cmd_volume_tier_cbk,
+          "NOTE: this is old syntax, will be depreciated in next release. "
+          "Please use gluster volume tier <vol> attach "
+          "[<replica COUNT>] <NEW-BRICK>..."},
+
+        { "volume detach-tier <VOLNAME> "
+          " <start|stop|status|commit|force>",
+        cli_cmd_volume_tier_cbk,
+          "NOTE: this is old syntax, will be depreciated in next release. "
+          "Please use gluster volume tier <vol> detach "
+          "{start|stop|commit} [force]"},
+#endif
+
+        { "volume add-brick <VOLNAME> [<stripe|replica> <COUNT> "
+          "[arbiter <COUNT>]] <NEW-BRICK> ... [force]",
+          cli_cmd_volume_add_brick_cbk,
+          "add brick to volume <VOLNAME>"},
+
+        { "volume remove-brick <VOLNAME> [replica <COUNT>] <BRICK> ..."
+          " <start|stop|status|commit|force>",
+          cli_cmd_volume_remove_brick_cbk,
+          "remove brick from volume <VOLNAME>"},
+
+        { "volume rebalance <VOLNAME> {{fix-layout start} | {start [force]|stop|status}}",
+          cli_cmd_volume_defrag_cbk,
+          "rebalance operations"},
+
+        { "volume replace-brick <VOLNAME> <SOURCE-BRICK> <NEW-BRICK> "
+          "{commit force}",
+          cli_cmd_volume_replace_brick_cbk,
+          "replace-brick operations"},
+
+        /*{ "volume set-transport <VOLNAME> <TRANSPORT-TYPE> [<TRANSPORT-TYPE>] ...",
+          cli_cmd_volume_set_transport_cbk,
+          "set transport type for volume <VOLNAME>"},*/
+
+        { "volume set <VOLNAME> <KEY> <VALUE>",
+          cli_cmd_volume_set_cbk,
+         "set options for volume <VOLNAME>"},
+
+        { "volume help",
+          cli_cmd_volume_help_cbk,
+          "display help for the volume command"},
+
+        { "volume log <VOLNAME> rotate [BRICK]",
+          cli_cmd_log_rotate_cbk,
+         "rotate the log file for corresponding volume/brick"},
+
+        { "volume log rotate <VOLNAME> [BRICK]",
+          cli_cmd_log_rotate_cbk,
+         "rotate the log file for corresponding volume/brick"
+         " NOTE: This is an old syntax, will be deprecated from next release."},
+
+        { "volume sync <HOSTNAME> [all|<VOLNAME>]",
+          cli_cmd_sync_volume_cbk,
+         "sync the volume information from a peer"},
+
+         { "volume reset <VOLNAME> [option] [force]",
+         cli_cmd_volume_reset_cbk,
+         "reset all the reconfigured options"},
+
+#if (SYNCDAEMON_COMPILE)
+        {"volume "GEOREP" [<VOLNAME>] [<SLAVE-URL>] {create [[ssh-port n] [[no-verify]|[push-pem]]] [force]"
+         "|start [force]|stop [force]|pause [force]|resume [force]|config|status [detail]|delete [reset-sync-time]} [options...]",
+         cli_cmd_volume_gsync_set_cbk,
+         "Geo-sync operations",
+         cli_cmd_check_gsync_exists_cbk},
+#endif
+
+         { "volume profile <VOLNAME> {start|info [peek|incremental [peek]|cumulative|clear]|stop} [nfs]",
+           cli_cmd_volume_profile_cbk,
+           "volume profile operations"},
+
+        { "volume quota <VOLNAME> {enable|disable|list [<path> ...]| "
+          "list-objects [<path> ...] | remove <path>| remove-objects <path> | "
+          "default-soft-limit <percent>} |\n"
+          "volume quota <VOLNAME> {limit-usage <path> <size> [<percent>]} |\n"
+          "volume quota <VOLNAME> {limit-objects <path> <number> [<percent>]} |\n"
+          "volume quota <VOLNAME> {alert-time|soft-timeout|hard-timeout} {<time>}",
+          cli_cmd_quota_cbk,
+          "quota translator specific operations"},
+
+        { "volume inode-quota <VOLNAME> enable",
+          cli_cmd_quota_cbk,
+          "quota translator specific operations"},
+
+         { "volume top <VOLNAME> {open|read|write|opendir|readdir|clear} [nfs|brick <brick>] [list-cnt <value>] |\n"
+           "volume top <VOLNAME> {read-perf|write-perf} [bs <size> count <count>] [brick <brick>] [list-cnt <value>]",
+           cli_cmd_volume_top_cbk,
+           "volume top operations"},
+
+        { "volume status [all | <VOLNAME> [nfs|shd|<BRICK>|quotad|tierd]]"
+          " [detail|clients|mem|inode|fd|callpool|tasks]",
+          cli_cmd_volume_status_cbk,
+          "display status of all or specified volume(s)/brick"},
+
+        { "volume heal <VOLNAME> [enable | disable | full |"
+          "statistics [heal-count [replica <HOSTNAME:BRICKNAME>]] |"
+          "info [healed | heal-failed | split-brain] |"
+          "split-brain {bigger-file <FILE> | latest-mtime <FILE> |"
+                       "source-brick <HOSTNAME:BRICKNAME> [<FILE>]} |"
+          "granular-entry-heal {enable | disable}]",
+          cli_cmd_volume_heal_cbk,
+          "self-heal commands on volume specified by <VOLNAME>"},
+
+        {"volume statedump <VOLNAME> [[nfs|quotad] [all|mem|iobuf|callpool|"
+         "priv|fd|inode|history]... | [client <hostname:process-id>]]",
+         cli_cmd_volume_statedump_cbk,
+         "perform statedump on bricks"},
+
+        {"volume list",
+         cli_cmd_volume_list_cbk,
+         "list all volumes in cluster"},
+
+        {"volume clear-locks <VOLNAME> <path> kind {blocked|granted|all}"
+          "{inode [range]|entry [basename]|posix [range]}",
+          cli_cmd_volume_clearlocks_cbk,
+          "Clear locks held on path"
+        },
+        {"volume barrier <VOLNAME> {enable|disable}",
+         cli_cmd_volume_barrier_cbk,
+         "Barrier/unbarrier file operations on a volume"
+        },
+        {"volume get <VOLNAME> <key|all>",
+         cli_cmd_volume_getopt_cbk,
+         "Get the value of the all options or given option for volume <VOLNAME>"
+        },
+        {"volume bitrot <VOLNAME> {enable|disable} |\n"
+         "volume bitrot <volname> scrub-throttle {lazy|normal|aggressive} |\n"
+         "volume bitrot <volname> scrub-frequency {hourly|daily|weekly|biweekly"
+         "|monthly} |\n"
+         "volume bitrot <volname> scrub {pause|resume|status|ondemand}",
+         cli_cmd_bitrot_cbk,
+         "Bitrot translator specific operation. For more information about "
+         "bitrot command type  'man gluster'"
+        },
+        { "volume reset-brick <VOLNAME> <SOURCE-BRICK> {{start} |"
+          " {<NEW-BRICK> commit}}",
+          cli_cmd_volume_reset_brick_cbk,
+          "reset-brick operations"},
+
+        { NULL, NULL, NULL }
+};

@@ -1,0 +1,225 @@
+											glusterfsd 初始化详细流程梳理
+1.定义一个ctx的结构体
+	struct glusterfs_ctx{
+		cmd_args_t cmd_args;
+		char		*process_uuid;//由时间和主机组成的识别码
+		FILE		*pidfp;//glusterd.vol
+		struct call_pool	*pool;
+		void		*event_pool;
+		void		*iobuf_pool;
+		void		*logbuf_pool;
+		size_t		page_size;//iobuf的大小128k
+		struct list_head	graph;//graph的链接头，链的是graph->list
+		glusterfs_graph_t	*active;//最新的graph
+		void		*master;//fuse
+		void		mgmt;//指向某一个xlator
+		void		*listener;//命令的接听口
+		unsigned char	measure_latency;//延时测量的开关
+		pid_t		mnt_pid; //mount agent的pid
+		int 		process_mode;//三种模式的选择
+		struct mem_pool		*dict_pool;  //某种类型的内存池
+		struct mem_pool		*dict_pair_pool;
+		struct mem_pool		*dict_data_pool;
+		int 		daemon_pipe[2]; //初始化为-1
+		struct tvec_base	*timer_wheel;//定时器轮训实例	
+	}
+	struct xlator{
+		struct list_head	volume_options; //volume_opt_list_t的list链表链在此，这个结构体有个成员given_opt保存了一个动态库的options[]
+		void		*private;   //指向一个内存池链表pooled_obj_hdr_t，fini会将它给热链表池
+		uint32_t	xl_id; //inode_ctx index
+		
+	}
+2.glusterfs_ctx_new//申请堆内存
+3.glusterfs_globals_init(ctx)//
+	3.1ctx的log等级初始化为GF_LOG_INFO,其中涉及log.gf_log_syslog,sys_log_level,logger,logformat,time_out；
+	3.2初始化log中log_buf的线程互斥锁；
+	3.3调用一次gf初始化，
+		xlator的name,type,list_head
+		uuid_buf_key，lkowner,leaseid,synctask,syncopctx(多线程私有数据)
+4.THIS是全局的 获取了xlator键对应的线程值后返回的xlator指针地址，此时将之前的ctx付给它的ctx
+5.glusterfs_ctx_defaults_init();
+	5.1申请mem_acct内存，设置它的num_type等参数
+	5.2设置process_uuid 
+	5.3设置page_size=128kb
+	5.4创建一个总大小为8兆大小，每页128个字节的io内存池iobuf_pool
+		struct iobuf_pool{
+			pthread_mutex_t	mutex;
+			size_t			arena_size;
+			size_t			default_page_size;//128kb
+			int				arena_cnt;
+			struct list_head	all_arenas; //所有的arena双循环链表
+			struct list_head	arenas[GF_VARIABLE_IOBUF_COUNT]; //8 保存了所有arena的list
+			struct list_head	filled[GF_VARIABLE_IOBUF_COUNT];//已填满的arena
+			struct list_head	purge[GF_VARIABLE_IOBUF_COUNT]; //可以被清空的arena
+			uint64_t		request_misses;
+			int				rdma_device_count;
+			struct list_head	*mr_list[GF_RDMA_DEVICE_COUNT]; //8 NULL
+			void			*device[GF_RDMA_DEVICE_COUNT];  //8 NULL
+			int (*rdma_registration)(void **,void *);
+			int (*rdma_deregistration)(struct list_head**,struct iobuf_arena *); //NULL
+		}
+		struct iobuf_init_config gf_iobuf_init_config[] = {
+        /* { pagesize, num_pages }, */
+        {128, 1024},
+        {512, 512},
+        {2 * 1024, 512},
+        {8 * 1024, 128},
+        {32 * 1024, 64},
+        {128 * 1024, 32},
+        {256 * 1024, 8},
+        {1 * 1024 * 1024, 2},
+		};
+		iobuf_pool_add_arena (iobuf_pool, page_size, num_pages)将上面8组pagesize和num_pages循环创建arena（8次）
+			尝试回收该page_size的arena ：__iobuf_arena_unprune
+			如果没有可回收的arena直接申请__iobuf_arena_alloc
+			struct iobuf_arena
+			struct iobuf
+				申请arena时同样先初始化所有的list包括它其中iobuf的list，
+				计算出arena_size=page_count*page_size,mmap(arena_size)的内存
+				判断有无rdma_registration函数，有则执行 （待详细查阅）
+				将iobuf_arena中的all_list加入到iobuf_pool中的all_arenas双循环链表中
+				__iobuf_arena_init_iobufs对该内存区域进行配置分页
+					申请page_count个sizeof(*iobuf)循环page_count次处理每个ioubf
+					初始化list，lock，将iobuf中的arena指向自身所属的arena
+					将此iobuf的list加到erana的passive.list
+					offset+=page_size,ptr是每个iobuf的首地址，一直在偏移
+					完成 iobuf指针++移动一次（一共page_count次）
+				arena_cnt++一次（总共将会8次）
+				将此arena的list指向到iobuf_pool中的arena[index]
+				总arena_size增加此arena的大小（page_count*page_size）
+			循环创建arena完毕，获取到了总arena_size的大小，然后多申请一个arena指针，其page_size=1G，将此arena的list也加到iobuf_pool的arena[8]上（作用未知）	
+	
+	5.5创建事件池event_pool_new
+		5.5.1在此有个event_ops操作函数集,赋值给ops
+		5.5.2创建处理16384个事件的监听端口，把此句柄赋给fd，eventthreadcount=1，auto_thread_count=0；
+	5.6创建内存池
+		在开始之前会调用__attribute__((constructor))来初始化power_of_two =7+i，pool_list_size=list+pool*14，线程结束时释放时清理函数（poison置为1，并将key对应的poll_list传给全局的pool_free_threads）
+		//用来记录每一类池子的大小（一共有14个此结构体，都会赋给pre_thread_pool_list->pools[]），同时记录各种操作的次数，用来检测使用情况及趋势分析，它并不存储实际的内存池链表，
+		struct mem_pool{
+			unsigned	power_of_two; //POOL_SMALLEST（7） + i
+			unsigned	allocs_hot; //pthread_pool中的热链表计数
+			unsigned	allocs_cold;
+			unsigned	allocs_stdc;
+			unsigned	frees_to_list;
+		}
+		同时创建一组全局变量说明内存池
+		static pthread_key_t	pool_key; //每个线程有自己的per_thread_pool_list_t  *pool_list
+		static pthread_mutex_t	pool_lock=PTHREAD_MUTEX_INITIALIZER; //静态初始化互斥锁
+		static struct list_head pool_threads;	//将每个线程的pool_list头链接在一起，双循环链表
+		static pthread_mutex_t  pool_free_lock  = PTHREAD_MUTEX_INITIALIZER;
+		static struct list_head pool_free_threads;  //空闲的list头
+		static struct mem_pool  pools[NPOOLS];  //一共14个类型
+		static size_t           pool_list_size; // pool_list的长度 +14*pool的长度		//每个线程保存一个链表，头是per_pthread_pool_list结构，后面跟着14个per_pthread_pool结构，也就是说每个线程有14中内存池，并且每个pool中有一个指针指向相应的mem_pool，同时有2个子链表，
+		typedef struct per_thread_pool_list{
+			struct list_head	thr_list; //此结构体会链在全局的pool_threads
+			unsigned			poison;  //此值会决定在子线程中是否删掉此pool_list
+			pthread_spinlock_t	lock;   //在申请list的时候会初始化为PTHREAD_PROCESS_PRIVATE：表示只能被初始化线程所属的进程中的线程共享
+			per_thread_pool_t	pools[1];//此处虽然是1，但实际代码中应为13,
+		}per_thread_pool_list_t;
+		
+		typedef struct per_thread_pool{
+			struct mem_pool		*parent;	//指向对应的mem_pool结构体，在每个pool_list创建时会循环创建14个pools，每个parent指向一种类型的mem_pool，只是申请了指针，但实际需要那种类型的mem_pool以及下面存储的冷热链表，还的看实际
+			pooled_obj_hdr_t	*hot_list; //热链表 正在使用的池链表 初始化均为NULL
+			pooled_obj_hdr_t	*cold_list;//冷链表 暂时空闲的池链表
+		}per_thread_pool_t;
+		
+		typedef struct pooled_obj_hdr_t
+		{
+			unsigned long		magic;  //0xCAFEBABE 内存链表的校验码，目前有三种模式
+			struct pooled_obj_hdr_t	*next; //NULL
+			struct per_thread_pool_list *pool_list;
+			unsigned int		power_of_two;  //mem->power_of_two
+		}
+		
+		每个需要内存池的地方使用mem_pool_new(type,count)来生成线程池基本信息mem_pool,当需要使用内存的时候调用mem_get0(struct mem_pool *mem_pool)来获取内存块，此函数在何处调用？，具体如下：
+			它调用的是mem_get(mem_pool),首先申请内存头pre_thread_pool_list,根据pool_key（全局）利用（一键多值）pthread_getspecific获取当前线程的键值,如果有则直接返回此list；如果没有则申请pool_list_size（全局）大小的内存块（pool_list），将pool_list->thr_list加到全局变量pool_threads中去（每个线程都会加入），给其中的成员赋值循环(14次)；将全局mem_pool[i]给parent[i]，将hot_list和cold_list置为NULL，最后利用pthread_setspecific (pool_key,pool_list)将添加线程键值（私有），此时pool_list创建完成
+		获取ctx->dict_pool=parents所在的pool_list->pools 给pt_pool 这个pools和全局的不一样，全局的是mem_pool类型，而此处的是per_thread_pool类型,mem_get_from_pool (pt_pool) 初始化真正的内存块，当有热链表时返回热，并对热计数+1，当有冷链表时返回冷，冷计数+1，起始应该都为NULL，则对allocs_stdc+1，直接返回malloc（1<<list->parent->power_of_two）对返回的链表pooled_obj_hdr_t开始赋值，（此时返回的是pooled_obj_hdr_t类型并且移动+1，被强转为了dict_t类型，以power_of_two为例申请了256kb，头占用了20kb，剩下的236转为dict_t），但是此时对这个链表没有说明是冷链表还是热链表，到此也就是说现在有一个pool_list，下面有14个pool，其中一个dict_pool类型的pool里面申请了一个内存块
+		
+		创建pool对象，初始化它的list（all_frame）、互斥锁，然后申请它的两个mem_pool对象
+			申请4096个call_frame_t类型的内存池并赋给pool->frame_mem_pool;
+			申请1024个call_stack_t类型的内存池并赋给pool->stack_mem_pool;	
+		申请1024个call_stub_t类型的内存池给ctx->stub_mem_pool
+		申请4096个dict_t的内存池给ctx->dict_pool
+		申请4096*4个data_pair_t的内存池给ctx->dict_pair_pool;
+		申请4096*4个data_t的内存池给ctx->dict_data_pool
+		申请256个log_buf_t的内存池给ctx->logbuf_pool
+		初始化条件变量和互斥锁
+	
+	设置缺省的参数（参数的意义保留）
+	设置进程资源不受限制
+6.parse_cmdline (argc, argv, ctx)
+	process_mode = gf_get_process_mode (argv[0])根据入参决定是哪种模式	
+	#define GF_SERVER_PROCESS   0
+	#define GF_CLIENT_PROCESS   1
+	#define GF_GLUSTERD_PROCESS 2
+	针对模式的不同将 gluster*.vol 赋给cmd_args->volfile，将volfile的文件状态获取赋给stbuf结构体（run_id为空，因此直接返回）
+7.logging_init()
+	根据参数设置不同的log 文件路径和名称,log等级，刷新超时等
+	gf_log_init (ctx, cmd_args->log_file, cmd_args->log_ident）打开log文件获取句柄，其中log_file=var/log/glusterfs/glusterd.log,log_ident=glusterd
+8.初始化一个全局互斥锁gf_proc_dump_mutex
+9.deamonize(ctx)
+	创建pipe（daemon_pipe）, 创建守护进程，关闭读通道，将输入输出标准错误全部重定向到/dev/null,主进程结束
+	glusterfs_pidfile_update (ctx)刷新rpc.stata.pid文件
+	gf_log_inject_timer_event (ctx)
+	glusterfs_signals_setup (ctx)
+	
+10.创建多线程（子线程分离）（为什么要不停的把冷链表转为热链表，把热链表置为NULL）
+	子线程如下处理（清扫mem_pool）：			
+		全局变量pool_threads里面放了所有类型内存池的头pool_list->thr_list,也就是pool_threads是一个循环链表，现在开始循环此链表：
+			如果此pool_list.poison为真，则将此pool_list->thr_list从原链表中即pool_thread中删除，然后加入到sweep_state_t->death_row中;
+			获取pool_list->lock的自旋锁，
+			开始循环处理此pool_list链接的pool，（14次）
+				如果有冷池链表，将该pool的冷链表地址给数组sweep_state_t->cold_list[],并计数+1，它能存所有pool的冷链表头，理论上最多有14个，然后把热链表头给冷链表头，热链表头赋NULL（将）
+			释放自旋锁
+		开始循环sweep_state_t->death_row中的链表所在的pool_list（链表头已不再pool_pthread中）:
+			开始循环pool_list：释放每个pool中的冷热链表，全局释放次数+1
+			删掉该pool_list链表（全局pool_pthread中），将此pool_list放入全局pool_free_threads
+		开始循环释放sweep_state_t->cold_lists[]
+	typedf struct{
+		struct list_head	death_row;
+		pooled_obj_hdr_t	*cold_list[N_COLD_LISTS]; //1024
+		unsigned int		n_cold_lists;
+	}sweep_state_t;
+	for(pool_list=list_entry(pool_threads->next,typeof(pool_list),thr_list),next_pl=list_entry(pool_list->thr_list.next,typeof(pool_list),thr_list); 
+	pool_list->thr_list !=pool_threads;
+	pool_list=next_pl,next_pl=list_entry(next_pl->thr_list.next,typeof(*next_pl),thr_list))
+	{
+		collect_garbage(&state,pool_list);
+	}
+	返回结构体地址：list_entry() = typeof(*next_pl) (char*(next_pl->thr_list.next)  - (unsigned long)&((typeof(*next_pl))0->thr_list))
+	list_del(struct list_head *old)
+	{
+		old->prev->next = old->next;
+		old->next->prev = old->prev;
+		
+		old->next = (void*)0xbabebabe;
+		old->prev = (void*)0xcafecafe;
+	}
+11.set_oom_score_adj 直接返回0
+12.ctx->env = syncenv_new (0, 0, 0) 看说明是创建一个newsync_environment
+	赋值procmin=2,procmax=16,申请newnev结构体，newenv->stacksize=2MB,以下过程循环2次：
+		首设置一些信号，然后创建子线程保证子线程只响应这些信号，开始进入子线程处理函数：
+			子线程函数一直在循环处理syncenv_task(proc):如果返回值为NULL了才退出，这个函数具体作用未知
+				如果env->runq为空，将env->runq.next所在的synctask->all_tasks从原链表删除，并且将synctask的woken，slept设为0，把pro给synctask并返回
+13.cmd->global_timer_wheel ==0,此步跳过
+调试方法：
+1. gdb glusterd
+	( handle SIGILL nostop)
+2. b main
+3. 其他断点说明:glusterfsd.c:2544
+				event-epoll.c:618 ==dispatch
+				socket.c:2379
+				rpcsvc-auth.c:385
+				syncop.c:571 synctask_create
+				glusterd-handler.c:4110
+				socket.c:2280 socket_proto_state_machine (this, &pollin) 
+4. 在刚开始时设置(因为在deamon那创建了守护进程，主进程已经回收了):
+	set follow-fork-mode child
+	set detach-on-fork on(默认模式；表示只调试一个进程，另一个进程正常运行；如果置为off，另一个进程暂停)
+	在2544行停一次，执行（由于此过程开始有创建多个子进程处理任务）：
+	set follow-fork-mode parent
+5.调试线程：
+	info thread
+	thread n (表示跳转到某个线程)
+	此处设置有点问题，没有控制好其他线程的运行状态，可以通过在对应任务处打断点来跳到对应线程处
+		

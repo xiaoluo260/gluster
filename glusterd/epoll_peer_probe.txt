@@ -1,0 +1,59 @@
+1.glusterd_handle_cli_probe (rpcsvc_request_t *req)
+	1.2 __glusterd_handle_cli_probe (rpcsvc_request_t *req)
+		1.2.0 xdr_to_generic (req->msg[0], &cli_req,(xdrproc_t)xdr_gf1_cli_peer_list_req)通过xdr解码出msg[0].iov_base中的数据返回数据长度
+		1.2.1 dict_unserialize (cli_req.dict.dict_val,cli_req.dict.dict_len, &dict)
+			1.2.1.1 获取dict中data个数count，开始循环count++
+				1.2.1.1.1 获取keylen，vallen，获取key首地址，将value放在申请data_t中，将key,value放入传进来的dict中
+				1.2.1.1.2 取第二个key，value重复操作
+		1.2.2 从dict中读取 hostname，port，
+		1.2.3 gf_is_local_addr (hostname)
+		1.2.4 glusterd_peerinfo_find_by_hostname (hostname)
+			1.2.4.1 如果在conf_t->peers中能找到hostname或者找到了ip地址，表示已经添加过，直接返回peerinfo，
+		1.2.5 glusterd_probe_begin (req, hostname, port, dict, &op_errno)
+			1.2.5.1 glusterd_friend_add (hoststr, port,GD_FRIEND_STATE_DEFAULT,NULL, &peerinfo, 0, &args)
+				1.2.5.1.1 glusterd_peerinfo_new (state, uuid, hoststr, port)
+					1. 新申请一个peer_info new_peer，
+					2. 新申请peerinfo存放hostname，链在new_peer中，new_peer除了有链表，还将hostname和port也保存在了自己的成员中
+					3. new_peer->sm_log，给sm_log赋值分别为：
+						log->size        = 50;
+						log->state_name_get = glusterd_friend_sm_state_name_get;
+						log->event_name_get = glusterd_friend_sm_event_name_get;
+					4. peer有几种状态：初始默认是GD_FRIEND_STATE_DEFAULT，即0
+					typedef enum glusterd_friend_sm_state_ {
+							GD_FRIEND_STATE_DEFAULT = 0,
+							GD_FRIEND_STATE_REQ_SENT,
+							GD_FRIEND_STATE_REQ_RCVD,
+							GD_FRIEND_STATE_BEFRIENDED,
+							GD_FRIEND_STATE_REQ_ACCEPTED,
+							GD_FRIEND_STATE_REQ_SENT_RCVD,
+							GD_FRIEND_STATE_REJECTED,
+							GD_FRIEND_STATE_UNFRIEND_SENT,
+							GD_FRIEND_STATE_PROBE_RCVD,
+							GD_FRIEND_STATE_CONNECTED_RCVD,
+							GD_FRIEND_STATE_CONNECTED_ACCEPTED,
+							GD_FRIEND_STATE_MAX
+					} glusterd_friend_sm_state_t
+				1.2.5.1.2 glusterd_store_peerinfo (*friend) //保存节点的信息
+					1. 创建$workdir/peers目录
+					2. glusterd_store_create_peer_shandle (peerinfo)
+					3. glusterd_store_perform_peer_store (peerinfo)
+				1.2.5.1.3 glusterd_friend_rpc_create (this, *friend, args)//建立与friend-peer通信
+					1. glusterd_transport_inet_options_build  设置time keeplive的相关参数
+					2. glusterd_rpc_create (&peerinfo->rpc, options,glusterd_peer_rpc_notify, peerctx,_gf_false)//连接rpc通信 AF_INET，与其他glusterd的listen
+						2.1 将函数glusterd_peer_rpc_notify注册给rpc->notifyfn
+						2.2 rpc_clnt_start (new_rpc) 建立链接
+							2.2.1 rpc_clnt_reconnect (conn)
+								2.2.1.1 rpc_transport_connect (trans,conn->config.remote_port)
+			1.2.5.2 glusterd_peer_hostname_update (peerinfo, hoststr,_gf_false)	
+				1.2.5.2.1 gd_add_address_to_peer (peerinfo, hostname)
+			1.2.5.3 glusterd_friend_sm_new_event (GD_FRIEND_EVENT_NEW_NAME,&event)
+			1.2.5.4 glusterd_xfer_cli_probe_resp (req, 0, GF_PROBE_SUCCESS,NULL, (char*)hoststr,port, dict)
+		1.2.6 glusterd_friend_sm () ??
+			1.2.6.1 glusterd_store_peerinfo (peerinfo)
+			1.2.6.2 glusterd_destroy_friend_event_context (event)
+		1.2.7 glusterd_op_sm () ??
+			
+	
+					
+										
+				

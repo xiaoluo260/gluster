@@ -1,0 +1,242 @@
+enum glusterd_mgmt_procnum {
+        GLUSTERD_MGMT_NULL,    /* 0 */
+        GLUSTERD_MGMT_CLUSTER_LOCK,
+        GLUSTERD_MGMT_CLUSTER_UNLOCK,
+        GLUSTERD_MGMT_STAGE_OP,
+        GLUSTERD_MGMT_COMMIT_OP,
+        GLUSTERD_MGMT_MAXVALUE,
+};
+
+0.socket_event_handler
+1.__glusterd_handle_create_volume (rpcsvc_request_t *req) //req是glusterd读到到的消息
+	1.1 xdr_to_generic (req->msg[0], &cli_req, (xdrproc_t)xdr_gf_cli_req)
+	1.2 dict_unserialize (cli_req.dict.dict_val,cli_req.dict.dict_len,&dict)
+	1.3 dict->extra_stdfree = cli_req.dict.dict_val 赋值
+	1.4 dict_get_str (dict, "volname", &volname)
+	1.5 glusterd_check_volume_exists (volname)
+	1.6 dict_get_int32 (dict, "count", &brick_count)
+	1.7 dict_get_int32 (dict, "type", &type)
+	1.8 dict_get_str (dict, "transport", &trans_type)
+	1.9 dict_get_str (this->options, "transport.address-family",&address_family_str)
+	1.10 dict_get_str (dict, "transport", &trans_type)
+	1.11 dict_set_dynstr_with_alloc (dict,"transport.address-family",address_family_str)
+	1.12 dict_set_dynstr_with_alloc (dict,"transport.address-family","inet")
+	1.13 dict_get_str (dict, "bricks", &bricks)
+	1.14 gf_uuid_generate (volume_id); uuid_utoa (volume_id) //随机值
+	1.15 dict_set_dynstr (dict, "volume-id", free_ptr)
+	1.16 gf_uuid_generate (tmp_uuid);  uuid_utoa (tmp_uuid)  //随机值
+	1.17 dict_set_dynstr (dict, "internal-username", username)
+	1.18 gf_uuid_generate (tmp_uuid);  uuid_utoa (tmp_uuid)  //随机值
+	1.19 dict_set_dynstr (dict, "internal-password", password)
+	1.20 glusterd_op_begin_synctask (req, GD_OP_CREATE_VOLUME, dict)
+		1.20.1 dict_set_int32 (dict, "sync-mgmt-operation", op)
+		1.20.2 gd_sync_task_begin (dict, req)
+			1.20.2.1 glusterd_generate_txn_id (op_ctx, &txn_id)
+				1.20.2.1.1 gf_uuid_generate (**txn_id)
+				////申请data存放txn_id的数据，将key-value放到dict中
+				1.20.2.1.2 dict_set_bin (dict, "transaction_id",*txn_id, sizeof (**txn_id))
+			1.20.2.2 glusterd_txn_opinfo_init (&txn_opinfo, NULL, &op, NULL, NULL) //给txn_opinfo成员赋值
+			1.20.2.3 glusterd_set_txn_opinfo (txn_id, &txn_opinfo)
+				1.20.2,3.1 dict_set_bin(priv->glusterd_txn_opinfo,uuid_utoa (*txn_id), opinfo_obj,sizeof(glusterd_txn_opinfo_obj))
+			1.20.2.4 glusterd_set_originator_uuid (op_ctx)
+				1.20.2.4.1  dict_set_bin (dict, "originator_uuid",originator_uuid, sizeof (uuid_t))
+					originator_uuid =MY_UUID ;MY_UUID= &priv->uuid[0]
+			1.20.2.5 glusterd_mgmt_v3_lock (volname, MY_UUID,&op_errno, "vol")
+				1.20.2.5.1 snprintf (key, sizeof(key), "%s_%s", name, type)
+				1.20.2.5.2 glusterd_get_mgmt_v3_lock_owner (key, &owner)
+				1.20.2.5.3 dict_set_bin (priv->mgmt_v3_lock, key, lock_obj, 设置name_type的置为MY_UUID	
+				1.20.2.5.4 bt = gf_backtrace_save (NULL)
+					1.20.2.5.4.1 gf_backtrace_fillframes (bt)  //bt=ctx->btbuf
+						1. backtrace (array, GF_BACKTRACE_FRAME_COUNT)//array赋值 各层的调用地址
+						2. gf_mkostemp (tmpl, 0, O_RDWR);  tmpl[32]= "/tmp/btXXXXXX"  //获取一个随机值（a-zA-Z0-9）来重写后6位的字符，打开此文件返回
+						3. backtrace_symbols_fd (&array[2], frames-2, fd)
+						//获取各层函数的调用地址
+						//&array[2] =__builtin_frame_address(4);即gd_sync_task_begin (dict, req)的返回地址
+						//将地址与和其对应的符号和地址加载模块的文件名写入到fd中
+						//将fd内容与-->拼接写入buf 按行
+				1.20.2.5.5  dict_set_dynstr_with_alloc (priv->mgmt_v3_lock, key, bt)
+					设置dict， key:debug.last-success-bt-volname-tcp  value:buf
+			1.20.2.6 gd_lock_op_phase (conf, op, op_ctx, &op_errstr, *txn_id,&txn_opinfo, cluster_lock) //GLUSTERD_MGMT_CLUSTER_LOCK
+					1. synctask_barrier_init((&args))
+					2. gd_syncop_mgmt_v3_lock (op, op_ctx, peerinfo, &args, MY_UUID, peer_uuid, txn_id)
+						2.1 gd_syncop_submit_request (peerinfo->rpc, &req, args, peerid,&gd_mgmt_v3_prog,GLUSTERD_MGMT_V3_LOCK,gd_syncop_mgmt_v3_lock_cbk,(xdrproc_t)xdr_gd1_mgmt_v3_lock_req)
+							2.1.1 xdr_sizeof (xdrproc, req)//将req的消息编码存到xdr,并返回长度
+							2.1.2 iobuf_get2 (rpc->ctx->iobuf_pool, req_size)
+							2.1.3 create_frame (THIS, THIS->ctx->pool)
+								2.1.3.1 frame->begin =gethomeofday()
+							2.1.4 xdr_serialize_generic (iov, req, xdrproc) iov的iov_base作为解码的缓存区
+							2.1.5 rpc_clnt_submit (rpc, prog, procnum, cbkfn,&iov, count, NULL, 0, iobref,frame, NULL, 0, NULL, 0, NULL)  
+								参数说明：cbkfn =gd_syncop_mgmt_v3_lock_cbk
+								2.1.5.1 消息头长度
+								2.1.5.2 填写鉴权信息
+								2.1.5.3 消息赋值
+								2.1.5.4 rpc_transport_submit_request (conn->trans, &req)
+									2.1.5.4.1 调用socket_submit_request(this, req)
+										2.1.5.4.1.1 __socket_ioq_new (this, &req->msg)
+										2.1.5.4.1.2  __socket_ioq_churn_entry (this, entry, 1) 读取消息
+										2.1.5.4.1.3 event_select_on (ctx->event_pool,priv->sock,priv->idx, -1, 1)
+											即调用event_select_on_epoll (struct event_pool *event_pool, int fd, int idx,int poll_in, int poll_out)
+											1.注册fd到event_pool
+								2.1.5.5 rpc_clnt_check_and_start_ping (rpc)
+									2.1.5.5.1 rpc_clnt_start_ping ((void *)rpc)
+										2.1.5.5.1.1 rpc_clnt_remove_ping_timer_locked (rpc) return 0;
+										2.1.5.5.1.2 __rpc_clnt_rearm_ping_timer (rpc,rpc_clnt_ping_timer_expired)
+											1.	gf_timer_call_after (rpc->ctx, timeout,cbk,(void *) rpc)
+												1.1 gf_timer_registry_init (ctx)
+												//设置线程忽略信号后创建新线程，并执行gf_timer_proc(reg)函数
+												//gf_timer_proc:循环一遍timer->active链接的链表，找出其中时间小于当前时间的list，调用callbk (list->data)，然后全部释放掉
+											2. 	conn->ping_timer = timer;
+												conn->ping_started = 1;
+										2.1.5.5.1.3 rpc_clnt_ping(rpc) 此处消息全部是NULL 猜测是验证通信正常
+											1. rpc_clnt_submit (rpc, &clnt_ping_prog,GF_DUMP_PING, rpc_clnt_ping_cbk, NULL, 0,NULL, 0, NULL, frame, NULL, 0, NULL, 0, NULL)
+												1.1 rpc_clnt_check_and_start_ping (rpc)也就是会循环调用ping，固定时间（3S）去ping检查链接正常
+					3. gd_synctask_barrier_wait((&args), peer_cnt)
+						3.1 static int __syncbarrier_wait (struct syncbarrier *barrier, int waitfor)
+							3.1.1 synctask_yield (task)
+								3.1.1.1 task->state = SYNCTASK_SUSPEND;
+								3.1.1.2 swapcontext (&task->ctx, &task->proc->sched)
+					4. return args.op_ret
+			1.20.2.7 glusterd_op_build_payload (&req_dict, &op_errstr, op_ctx)
+				1.20.2.7.1 ++glusterfs_port(24007)
+				1.20.2.7.2 dict_set_int32 (dict, "port",glusterfs_port)
+			1.20.2.8 gd_stage_op_phase (op, op_ctx, req_dict, &op_errstr, &txn_opinfo) //GLUSTERD_MGMT_STAGE_OP
+				1.20.2.8.1 aggr_dict = req_dict
+				1.20.2.8.2 glusterd_validate_quorum (this, op, req_dict, op_errstr) //判断quorum的参数
+				1.20.2.8.3 glusterd_op_stage_validate (op, req_dict, op_errstr, rsp_dict)
+					1. glusterd_op_stage_create_volume (dict, op_errstr,rsp_dict)
+						1.1 dict_get_str (dict, "volname", &volname)
+						1.2 glusterd_check_volume_exists (volname)
+						1.3 dict_get_int32 (dict, "count", &brick_count)
+						1.4 dict_get_str (dict, "volume-id", &volume_uuid_str)
+						1.5 dict_get_str (dict, "bricks", &bricks)
+						1.6  while ( i < brick_count) brick->vg？？？是多少
+							1.6.1 glusterd_brickinfo_new_from_brick (brick, &brick_info,_gf_true, op_errstr)
+							1.6.2 glusterd_new_brick_validate (brick, brick_info, msg,sizeof (msg), NULL)
+							1.6.3 glusterd_resolve_brick (brick_info)
+							1.6.4 glusterd_is_valid_vg (brick_info, 1, msg)打开保存的卷文件配置信息，检查brick可加入即相关信息，使用了lvm第三方操作（应该是解析lvm文件专用的接口）
+								1.6.4.1 lvm_vg_open (handle, vg_name, "r", 0)
+							1.6.5 glusterd_validate_and_create_brickpath (brick_info,volume_uuid, op_errstr,is_force, _gf_false)
+								1.6.5.1 检查各个目录的属性
+								1.6.5.2 glusterd_bd_set_vg_tag (volume_id, brickinfo, msg,sizeof(msg))
+									1. lvm_vg_open (handle, brick->vg, "w", 0)打开卷配置文件，写相关信息
+								1.6.5.3 glusterd_check_and_set_brick_xattr (brickinfo->hostname,brickinfo->path, volume_id,op_errstr, is_force)  设置brick属性
+									1.6.5.3.1 glusterd_is_path_in_use (path, &in_use, op_errstr)此处遇见创建卷时最常见的问题 
+										1. if (getxattr(path,key,value,size) > 0)
+												if (!strcmp (path, curdir))  两者相等strncpy (curdir, path,n)
+													{snprintf (msg, sizeof (msg), "%s is already part of a ""volume", path)
+									1.6.5.3.2 flags = XATTR_CREATE
+									1.6.5.3.3 sys_lsetxattr (path, GF_XATTR_VOL_ID_KEY, uuid, 16,flags) //#define GF_XATTR_VOL_ID_KEY   "trusted.glusterfs.volume-id"
+							1.6.6 glusterd_get_brick_mount_dir(brick_info->path, brick_info->hostname,brick_info->mount_dir)
+							1.6.7 dict_set_dynstr_with_alloc(rsp_dict, key, brick_info->mount_dir) key="brick%d.mount_dir"i
+							1.6.8 glusterd_brickinfo_delete (brick_info)
+						1.7 Check brick order if the volume type is replicate or disperse.
+						1.8 如果没有设置force，并且类型是replicate或disperse则glusterd_check_brick_order(dict, msg)失败的话报错：Not creating volume because of bad ""brick order"
+				1.20.2.8.4 glusterd_syncop_aggr_rsp_dict (op, aggr_dict, rsp_dict)
+					1.20.2.8.4.1 glusterd_aggr_brick_mount_dirs (dict *aggr,dict* rsp) //从rsp中读出mount_dir 添加给aggr
+						1. for(brick_count)
+						2. dict_get_str (rsp_dict, key, &brick_mount_dir) key="brick%d.mount_dir", i ;获取挂载目录
+				1.20.2.8.5 cds_list_for_each_rcu
+					1.20.2.8.5.1 gd_syncop_mgmt_stage_op (peerinfo, &args,MY_UUID, tmp_uuid,op, req_dict, op_ctx)
+						1. dict_allocate_and_serialize (dict_out,&req->buf.buf_val, &req->buf.buf_len)	
+						2. gd_syncop_submit_request (peerinfo->rpc, req, args, peerid,&gd_mgmt_prog, GLUSTERD_MGMT_STAGE_OP,gd_syncop_stage_op_cbk,(xdrproc_t) xdr_gd1_mgmt_stage_op_req)
+							2.1 xdr_serialize_generic (iov, req, xdrproc)
+							2.2 rpc_clnt_submit (rpc, prog, procnum, cbkfn,&iov, count, NULL, 0, iobref,frame, NULL, 0, NULL, 0, NULL)
+								2.2.1 rpcreq 赋值
+								2.2.2 req.msg 赋值
+								2.2.3 req.rsp赋值
+								2.2.4 rpc_transport_submit_request (conn->trans, &req)
+									2.2.4.1 submit_request (this, req)
+								2.2.5  __save_frame (rpc, frame, rpcreq)
+									2.2.5.1  __saved_frames_put (conn->saved_frames, frame, rpcreq)
+										conn->saved_frames赋值：
+											saved_frame->capital_this = THIS;
+											saved_frame->frame        = frame;
+											saved_frame->rpcreq       = rpcreq;
+											gettimeofday (&saved_frame->saved_at, NULL)
+										list_add_tail (&saved_frame->list, &frames->lk_sf.list)
+									2.2.5.2  conn->timer = gf_timer_call_after (rpc_clnt->ctx,timeout,call_bail,(void *) rpc_clnt)  //timeout.tv_sec  = 10;
+										新申请gf_timer_t *event
+										event->at= timespec_now()+ delta
+										event->callbk = callbk;
+										event->data = data; //rpc_clnt
+										event->xl = THIS;
+									conn->timer  =event
+								2.2.6 rpc_clnt_check_and_start_ping (rpc)
+				1.20.2.8.6 gd_synctask_barrier_wait((&args), peer_cnt)
+				1.20.2.8.7 glusterd_validate_and_set_gfid (op_ctx, req_dict,op_errstr)
+			1.20.2.9 gd_brick_op_phase (op, op_ctx, req_dict, &op_errstr)
+				1.20.2.9.1 glusterd_op_bricks_select (op, req_dict, op_errstr, &selected,rsp_dict) //无 GD_OP_CREATE_VOLUME 分支,是否在前面有对op重新赋值？？
+				下面是对brick的一些操作，从分析来看这些流程都走不到
+				1.20.2.9.2 gd_syncop_mgmt_brick_op (rpc, pending_node, op, req_dict,op_ctx, op_errstr)
+					初始化args.op_ret = -1; args.op_errno = ENOTCONN;
+			
+			1.20.2.10 gd_commit_op_phase (op, op_ctx, req_dict, &op_errstr,&txn_opinfo) // GLUSTERD_MGMT_COMMIT_OP
+				1.20.2.10.1 glusterd_op_commit_perform (op, req_dict, op_errstr, rsp_dict)
+					1.20.1.10.1.1 glusterd_op_create_volume (dict, op_errstr)
+						1. glusterd_volinfo_new (&volinfo)
+							1.1 glusterd_snapdsvc_build(&(new_volinfo->snapd.svc)); //snapd.svc赋值（函数指针）
+							1.2 glusterd_tierdsvc_build(&(new_volinfo->tierd.svc));//tierd.svc赋值（函数指针）
+							将new_volinfo赋给volinfo
+						2. 通过dict_get_int32，给volinfo赋值 “volname”"type""count""port""bricks"
+						3. /* replica-count 1 means, no replication, file is in one brick only */
+							volinfo->replica_count = 1;
+							/* stripe-count 1 means, no striping, file is present as a whole */
+							volinfo->stripe_count = 1;
+						4.GF_CLUSTER_TYPE_DISPERSE 我们走读的是纠删卷
+						5. 获取"disperse-count" "redundancy-count" 对应的value给volinfo
+						6. volinfo->transport_type =GF_TRANSPORT_TCP
+						7. 循环处理 while ( i <= count) 
+							7.1 glusterd_brickinfo_new_from_brick (brick, &brickinfo,_gf_true, op_errstr)
+							7.2 glusterd_resolve_brick (brickinfo)
+							7.3 glusterd_is_valid_vg (brickinfo, 0, msg) //验证vg是否存在与brick
+						8.glusterd_enable_default_options (volinfo, NULL)
+							8.1 dict_set_dynstr_with_alloc (volinfo->dict,NFS_DISABLE_MAP_KEY, "on")"nfs.disable"
+							8.2 "features.quota-deem-statfs", "on"
+						9.gd_update_volume_op_versions (volinfo)
+						10.glusterd_store_volinfo (volinfo,GLUSTERD_VOLINFO_VER_AC_INCREMENT)
+							10.1 glusterd_store_create_volume_dir (volinfo)
+							10.2 glusterd_store_create_volume_run_dir (volinfo)
+							10.3 glusterd_store_create_vol_shandle_on_absence (volinfo)
+							10.4 glusterd_store_create_nodestate_sh_on_absence (volinfo)
+							10.5 glusterd_store_perform_volume_store (volinfo)
+								10.5.1 glusterd_store_volinfo_write (fd, volinfo)
+							10.6 glusterd_store_volume_atomic_update (volinfo)
+							10.7 glusterd_store_perform_node_state_store (volinfo)
+							10.8 glusterd_compute_cksum (volinfo, _gf_false)
+						11.glusterd_create_volfiles_and_notify_services (volinfo)
+							11.1 glusterd_create_volfiles (volinfo)
+								11.1.1 generate_brick_volfiles (volinfo)
+								11.1.2 generate_client_volfiles (volinfo, GF_CLIENT_TRUSTED)
+									11.1.2.1 generate_single_transport_client_volfile (volinfo,filepath,dict)
+										11.1.2.1.1 client_graph_builder (volgen_graph_t *graph, glusterd_volinfo_t *volinfo,dict_t *set_dict, void *param)
+											1. volgen_graph_build_clients (graph, volinfo, set_dict,param)
+											2. volume_volgen_graph_build_clusters(graph, volinfo, _gf_false)
+												2.1volgen_graph_build_ec_clusters (graph, volinfo)
+													2.1.1 volgen_link_bricks_from_list_tail_start (graph, volinfo,disperse_args[0],disperse_args[1],volinfo->brick_count,volinfo->disperse_count,start_count)
+														disperse_args[]    = {"cluster/disperse","%s-disperse-%d"};
+									11.1.2.2 glusterd_get_rebalance_volfile (volinfo, filepath, PATH_MAX) //rebalance的vol文件生成
+									11.1.2.3 build_rebalance_volfile (volinfo, filepath, dict)
+										11.1.2.3.1 graph_set_generic_options (this, &graph, set_dict,"rebalance-daemon")
+										11.1.2.3.2  volgen_write_volfile (&graph, filepath) 写临时文件
+								11.1.3 generate_client_volfiles (volinfo, GF_CLIENT_OTHER)
+							11.2 glusterd_fetchspec_notify (this)
+								11.2.1 rpcsvc_callback_submit (priv->rpc, trans,&glusterd_cbk_prog,GF_CBK_FETCHSPEC, NULL, 0,NULL) 有写消息
+					1.20.1.10.1.2 循环 cds_list_for_each_entry_rcu (peerinfo, &conf->peers, uuid_list)
+						1.gd_syncop_mgmt_commit_op (peerinfo, &args,MY_UUID, tmp_uuid,op, req_dict, op_ctx)
+							1.1 gd_syncop_submit_request (peerinfo->rpc, req, args, peerid,&gd_mgmt_prog, GLUSTERD_MGMT_COMMIT_OP,gd_syncop_commit_op_cbk,(xdrproc_t) xdr_gd1_mgmt_commit_op_req)
+								发消息的流程都一样（填写不同的消息）第三次发消息给peerinfo
+					1.20.1.10.1.3 gd_synctask_barrier_wait((&args), peer_cnt)
+					1.20.1.10.1.4 glusterd_op_modify_op_ctx (op, op_ctx)
+			1.20.2.10 gd_unlock_op_phase (conf, op, &op_ret, req, op_ctx,op_errstr, volname, is_acquired,*txn_id, &txn_opinfo,cluster_lock)	//GLUSTERD_MGMT_CLUSTER_UNLOCK
+				cds_list_for_each_entry_rcu (peerinfo, &conf->peers,uuid_list)
+				1.20.2.10.1 gd_syncop_submit_request (peerinfo->rpc, &req, args, peerid,
+                                        &gd_mgmt_prog,
+                                        GLUSTERD_MGMT_CLUSTER_UNLOCK,
+                                        gd_syncop_mgmt_unlock_cbk,
+                                        (xdrproc_t) xdr_gd1_mgmt_cluster_lock_req)
+			1.20.2.11 glusterd_op_send_cli_response (op, op_ret, op_errno, req,op_ctx, op_errstr); //给cli反馈
+				1.  rsp.op_ret = op_ret;
+					rsp.op_errno = op_errno
+					rsp.op_errstr = ""
+				2. glusterd_to_cli (req, cli_rsp, NULL, 0, NULL,xdrproc, ctx)  xdrproc=xdr_gf_cli_rsp()解读各类消息
+					2.1glusterd_submit_reply (req, arg, payload, payloadcount, iobref,(xdrproc_t) xdrproc)

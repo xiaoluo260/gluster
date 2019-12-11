@@ -1,0 +1,36 @@
+cli_input_init (&state)
+1.创建子线程处理cli_input（state）
+2.cli_cmd_process_line (state, cmd)
+3.cli_cmd_process (state, count, tokens)//将传入的字符串分割，单独存在tokens数组中
+4.for循环匹配字符串，找对其对应的cbkfn
+5.word->cbkfn (state, word, (const char **)argv, argc)，此处对应函数为cli_cmd_volume_create_cbk
+	5.1 proc={"CREATE_VOLUME", gf_cli_create_volume}
+	5.2 create_frame (THIS, THIS->ctx->pool)
+		5.2.1 memcpy (&frame->begin, &stack->tv, sizeof (stack->tv))，此时间是gettimeofday获取的时间
+	5.3 cli_cmd_volume_create_parse (state, words, wordcount, &options)
+		5.3.1cli_validate_volname (volname) 判断卷名的有效性
+		while循环：以纠删卷为例
+			5.3.2str_getunamb (words[index], opwords)在已有的字串里匹配第4个参数
+			5.3.3 ret = cli_validate_disperse_volume (w, type, words,wordcount, index, &disperse_count,&redundancy_count, &disperse_data_count)
+				参数说明： index=3，type=GF_CLUSTER_TYPE_NONE ,后三个参数均为-1
+				判断disperse的数字应大于2，disperse-data大于1，redundancy大于0，返回ret=2
+			继续循环看第6个参数是不是reduntancy
+		退出循环
+		5.3.4 如果参数带了force  ，is_force = _gf_true
+		5.3.5 cli_cmd_bricks_parse (words, wc, brick_index, &bricks,&brick_count)
+		参数说明：wc=wordcount brick_index=上步返回的序号  后2个参数为0   ；检查ip:brick格式，并将根据空格其分割到bricks中
+		5.3.6 cli_cmd_create_disperse_check 校验设置的比例
+		5.3.7 设置dict数据:
+			"disperse-count",disperse_count ; 
+			"redundancy-count",redundancy_count
+			"volname", volname
+			"type", type =GF_CLUSTER_TYPE_DISPERSE
+			"transport", trans_type
+			"bricks", bricks
+			"count", brick_count
+			"force", is_force
+	5.4 gf_cli_create_volume(frame, THIS, options)
+		5.4.1cli_to_glusterd (&req, frame, gf_cli_create_volume_cbk,(xdrproc_t) xdr_gf_cli_req, dict,GLUSTER_CLI_CREATE_VOLUME, this, cli_rpc_prog,NULL)
+			5.4.1.1 dict_set_dynstr (dict, "cmd-str", cmd)
+			5.4.1.2 cli_cmd_submit (NULL, req, frame, prog, procnum, iobref, this,cbkfn, (xdrproc_t) xdrproc)
+			具体消息处理发送和其他命令差不多

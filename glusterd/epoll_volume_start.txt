@@ -1,0 +1,125 @@
+/usr/local/sbin/glusterfsd -s node03 --volfile-id mode.node03.usr1-data1 -p /var/run/gluster/vols/mode/node03-usr1-data1.pid -S /var/run/gluster/08162f6f702c318a6cd2297e722782e6.socket --brick-name /usr1/data1 -l /var/log/glusterfs/bricks/usr1-data1.log --xlator-option *-posix.glusterd-uuid=bff4115a-44e6-4635-96ed-4d536cc097e8 --brick-port 49152 --xlator-option mode-server.listen-port=49152
+
+消息类型：
+enum glusterd_mgmt_v3_procnum {
+        GLUSTERD_MGMT_V3_NULL,    /* 0 */
+        GLUSTERD_MGMT_V3_LOCK,
+        GLUSTERD_MGMT_V3_PRE_VALIDATE,
+        GLUSTERD_MGMT_V3_BRICK_OP,
+        GLUSTERD_MGMT_V3_COMMIT,
+        GLUSTERD_MGMT_V3_POST_VALIDATE,
+        GLUSTERD_MGMT_V3_UNLOCK,
+        GLUSTERD_MGMT_V3_MAXVALUE,
+};下面流程消息的发送与之匹配
+
+1.__glusterd_handle_cli_start_volume (rpcsvc_request_t *req)
+	1.1xdr_to_generic (req->msg[0], &cli_req, (xdrproc_t)xdr_gf_cli_req)
+	1.2 dict_unserialize (cli_req.dict.dict_val,cli_req.dict.dict_len,&dict)
+	1.3 glusterd_mgmt_v3_initiate_all_phases (req,GD_OP_START_VOLUME,dict)
+		1.3.1 gf_uuid_copy (*originator_uuid, MY_UUID) ，
+		1.3.2 设置dict： "originator_uuid"-originator_uuid
+		1.3.3 dict, "is_synctasked", _gf_true
+		1.3.4 glusterd_mgmt_v3_initiate_lockdown (op, dict, &op_errstr,&op_errno, &is_acquired,txn_generation)
+		参数说明： op:GD_OP_START_VOLUME op_errstr=NULL op_errno=0 is_acquired=_gf_false txn_generation=conf->generation
+			1.3.4.1 glusterd_multiple_mgmt_v3_lock (dict, MY_UUID, op_errno) //Trying to acquire multiple mgmt_v3 locks on local node 
+				glusterd_valid_entities   valid_types[] = {
+						{ "vol",  _gf_true  },
+						{ "snap", _gf_false },
+						{ "global", _gf_false},
+						{ NULL              },
+				};
+				1.3.4.1.1 glusterd_mgmt_v3_lock_entity(dict, uuid, op_errno,valid_types[i].type,valid_types[i].default_value) //对 vol 加锁
+				args: .type ="vol" default_value=false
+			1.3.4.2 is_acquired = _gf_true
+			1.3.4.3 args->dict=NULL
+			1.3.4.4 gd_mgmt_v3_lock (op, dict, peerinfo, &args,MY_UUID, peer_uuid)//给特定的peer发消息
+				1.3.4.4.1 gd_syncop_submit_request (peerinfo->rpc, &req, args, peerid,
+                                        &gd_mgmt_v3_prog,
+                                        GLUSTERD_MGMT_V3_LOCK,
+                                        gd_mgmt_v3_lock_cbk,
+                                        (xdrproc_t) xdr_gd1_mgmt_v3_lock_req)
+				
+		1.3.5 glusterd_mgmt_v3_build_payload (&req_dict, &op_errstr, dict, op) //req_dict=NULL
+			1.3.5.1 glusterd_dict_set_volid (dict,volname,op_errstr)
+				1.3.5.1.1 找到volname，读取它的glusterd_volinfo_t     *volinfo，存了已经创建好的volume的相关信息
+				1.3.5.1.2 dict： "vol-id", volinfo->volume_id
+			1.3.5.2 *req_dict = dict
+		1.3.6 glusterd_mgmt_v3_pre_validate (op, req_dict, &op_errstr,&op_errno, txn_generation)
+			1.3.6.1 gd_mgmt_v3_pre_validate_fn (op, req_dict, op_errstr,rsp_dict, op_errno)
+				1.3.6.1.1 glusterd_op_stage_start_volume (dict, op_errstr,rsp_dict)  ---待细化
+			1.3.6.2 glusterd_pre_validate_aggr_rsp_dict (op, req_dict,rsp_dict)
+				1.3.6.2.1 glusterd_aggr_brick_mount_dirs (aggr, rsp)
+			1.3.6.3 发送预先验证请求给其他node
+			1.3.6.4 cds_list_rcu循环
+				1.3.6.4.1 //猜测已经加到peer的节点状态是GD_FRIEND_STATE_BEFRIENDED
+				gd_mgmt_v3_pre_validate_req (op, req_dict, peerinfo, &args,MY_UUID, peer_uuid)
+					1.3.6.4.1.1 gd_syncop_submit_request (peerinfo->rpc, &req, args, peerid, //预先验证消息
+                                        &gd_mgmt_v3_prog,
+                                        GLUSTERD_MGMT_V3_PRE_VALIDATE,
+                                        gd_mgmt_v3_pre_validate_cbk,
+                                        (xdrproc_t) xdr_gd1_mgmt_v3_pre_val_req)
+			1.3.6.5 gd_synctask_barrier_wait((&args), peer_cnt)
+		1.3.7 glusterd_mgmt_v3_commit (op, dict, req_dict, &op_errstr,&op_errno, txn_generation)
+			1.3.7.1 gd_mgmt_v3_commit_fn (op, req_dict, op_errstr,op_errno, rsp_dict)
+				1.3.7.1.1 glusterd_op_start_volume (dict, op_errstr)
+					1. cds_list_for_each_rcu 循环检查brick
+					1. glusterd_start_volume (volinfo, flags, _gf_true)
+						wait=ture  flags=force
+						1.1 cds_list_for_each_rcu(brick)
+							1.1.1 glusterd_brick_start (volinfo, brickinfo, wait)
+								1.1.1.1 GLUSTERD_GET_BRICK_PIDFILE (pidfile, volinfo, brickinfo, conf) //例 pidfile=/var/lib/gluster/vols/mode/node01-usr1-data.pid
+								1.1.1.2 gf_is_service_running (pidfile, &pid) return false
+								1.1.1.3 _mk_rundir_p (volinfo)
+								1.1.1.4  find_compatible_brick (conf, volinfo, brickinfo,&other_vol)
+									1.1.1.4.1 //等待 15s /var/run/gluster/vols/mode/node03-usr1-data1.pid  文件被填充
+											  // gf_is_service_running 如果pid文件被填充 则返回true
+								1.1.1.5 glusterd_volume_start_glusterfs (volinfo, brickinfo, wait)
+									1.1.1.5.1 glusterd_set_brick_socket_filepath (volinfo, brickinfo, socketpath,sizeof (socketpath))
+									//创建MD5.socket文件 ：socketpath
+									1.1.1.5.2 glusterd_unlink_file (socketpath)
+									1.1.1.5.3 pmap_assign_port (THIS, brickinfo->port, brickinfo->path) //获得端口
+									1.1.1.5.4 runinit (&runner)
+									1.1.1.5.5 runner_add_args (&runner, "valgrind", "--leak-check=full","--trace-children=yes", "--track-origins=yes",NULL)
+									1.1.1.5.6 glusterd_uuid =*-posix.glusterd-uuid=bff4115a-44e6-4635-96ed-4d536cc097e8
+									1.1.1.5.7 runner_add_args (&runner, SBIN_DIR"/glusterfsd",
+												 "-s", brickinfo->hostname, "--volfile-id", volfile,
+												 "-p", pidfile, "-S", socketpath,
+												 "--brick-name", brickinfo->path,
+												 "-l", brickinfo->logfile,
+												 "--xlator-option", glusterd_uuid,
+												 NULL);
+									1.1.1.5.8 runner_argprintf (&runner, "%d", port)
+									1.1.1.5.9 brickinfo->started_here = _gf_true
+									1.1.1.5.10 runner_run (&runner); //执行 glusterfsd 返回值是-1？？疑问
+									1.1.1.5.11 glusterd_brick_connect (volinfo, brickinfo, socketpath) 等fsd启动之后，与fsd的unix-sock建立链接
+										1.rpc_transport_unix_options_build (&options, socketpath,600) 新设置一个dict 关于此brick-rpc的相关信息
+										2. gf_asprintf (&brickid, "%s:%s:%s", volume_id_str,brickinfo->hostname, brickinfo->path)
+										2.glusterd_rpc_create (&rpc, options,glusterd_brick_rpc_notify,brickid, _gf_false)
+						1.2 verincrement = GLUSTERD_VOLINFO_VER_AC_INCREMENT
+						1.3 glusterd_set_volume_status (volinfo, GLUSTERD_STATUS_STARTED)
+						1.4 glusterd_store_volinfo (volinfo, verincrement) 记录volume信息
+					2.glusterd_svcs_manager (volinfo)
+						svc->manager = glusterd_nfssvc_manager
+						svc->manager = glusterd_bitdsvc_manager
+						svc->manager = glusterd_quotadsvc_manager
+						svc->manager = glusterd_scrubsvc_manager
+						svc->manager = glusterd_shdsvc_manager
+						svc->manager = glusterd_snapdsvc_manager
+						svc->manager = glusterd_tierdsvc_manager
+			1.3.7.2 glusterd_syncop_aggr_rsp_dict (op, op_ctx,rsp_dict)	
+				1.3.7.2.1 glusterd_aggr_brick_mount_dirs (aggr, rsp); //从rsp中读出mount_dir 添加给aggr
+			1.3.7.3 gd_mgmt_v3_commit_req (op, req_dict, peerinfo, &args,MY_UUID, peer_uuid) //向集群中其他节点发送req
+				1.3.7.3.1 gd_syncop_submit_request (peerinfo->rpc, &req, args, peerid,
+                                        &gd_mgmt_v3_prog,
+                                        GLUSTERD_MGMT_V3_COMMIT,
+                                        gd_mgmt_v3_commit_cbk,
+                                        (xdrproc_t) xdr_gd1_mgmt_v3_commit_req)
+		1.3.8 glusterd_mgmt_v3_post_validate (op, 0, dict, req_dict, &op_errstr,txn_generation)
+			1.3.8.1 gd_mgmt_v3_post_validate_fn (op, op_ret, req_dict, op_errstr,rsp_dict)验证本地节点端口
+			1.3.8.2 gd_syncop_submit_request (peerinfo->rpc, &req, args, peerid,
+                                        &gd_mgmt_v3_prog,
+                                        GLUSTERD_MGMT_V3_POST_VALIDATE,
+                                        gd_mgmt_v3_post_validate_cbk,
+                                        (xdrproc_t) xdr_gd1_mgmt_v3_post_val_req)
+		1.3.9 glusterd_mgmt_v3_release_peer_locks (op, dict, op_ret,&op_errstr, is_acquired,txn_generation) 释放节点的lock锁定
+	1.4 free (cli_req.dict.dict_val) 释放消息内存

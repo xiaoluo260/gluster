@@ -1,0 +1,326 @@
+﻿						glusterfs_volumes_init
+0.  ctx->cmd_args:{
+		volfile=glusterd.vol,
+		logfile=glusterd.log,
+		log_ident=glusterd,
+		log_format=gf_logformat_withmsgif,
+		fopen_keep_cache=2,
+		fuse_direct_io_mode=2,
+		fuse_entry_timeout=-1,
+		fuse_atrribute_timeout=-1,
+		mem_acct=1
+	}
+1.fp=get_volfp()获取glusterd.vol文件对象
+2.glusterfs_process_volfp (ctx, fp)
+	2.1graph = glusterfs_graph_construct (fp)用卷解析配置文件构建一个graph结构体（实现在graph.y文件中）
+		graph->first:
+			{name = 0x65e870 "management", type = 0x65e9e0 "mgmt/glusterd", instance_name = 0x0, next = 0x0, prev = 0x0, parents = 0x0, children = 0x0, options = 0x65e8b0, 
+			 dlhandle = 0x65eb00, fops = 0x7fffecb11b20 <fops>, cbks = 0x7fffecb11e60 <cbks>, dumpops = 0x7fffecb03f80 <dumpops>, volume_options = {next = 0x662ac0, 
+			 prev = 0x662ac0}, fini = 0x7fffec7b25a0 <fini>, init = 0x7fffec7afab0 <init>, reconfigure = 0x0, mem_acct_init = 0x7fffec7af1c0 <mem_acct_init>, 
+			 notify = 0x7fffec7b25d0 <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, count = 0} <repeats 55 times>}, 
+			 history = 0x0, ctx = 0x0, graph = 0x6598a0, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, winds = 0, switched = 0 '\000',
+			struct glusterfs_graph{
+				struct list_head	list;
+				char				graph_uuid[128];
+				struct timeval		dob;
+				void				*first; //存储xlator（其余的xlator通过成员parent和children链接）
+				void				*top;	存储头xlator
+				uint32_t			leaf_count;
+				int 				xl_count;
+				int					id;
+				int					used;//fuse获取child_up是设置
+				uint32_t			volfile_checksum;
+			}
+	2.2glusterfs_graph_prepare (graph, ctx, ctx->cmd_args.volume_name) 对graph预处理
+		2.2.1glusterfs_graph_settop (glusterfs_graph_t *graph, glusterfs_ctx_t *ctx,char *volume_name)//设置graph 的top translator,gdb追踪volume_name为空，所以应该是把first赋给top
+		2.2.2 glusterfs_graph_insert (graph, ctx, "features/worm","worm-autoload", 1)从代码中看此处有初始化多个类型的xlator，但在调用mem_pool创建中调用的是同一个内存池申请函数（对象全为mem_pool类型dict_pool），一共有5次初始化，分别位worm,acl,mac_compat,gfid_access,meta，他们最终都会链接在graph-first的最前面,并有计数，graph->top指向最新申请的一个xlator
+			以glusterfs_graph_worm为例：
+			
+			此处有申请一个新的xlator（*****************这个和全局的THIS不一致，目前看xlator有多个，每种类型的内存池都有一个对应的xlator而ctx只有一个***********）
+			
+			2.2.2.1 主要是查看cmd_args中的标记位参数，如果置为1则正式申请mem_pool；;看函数实现主要新创建一个xlator_t ixl将主函数的graph和ctx都传给它，ixl->options就是内存池的申请ixl->options  = get_new_dict (),它申请的是ctx->dict_pool类型的mem_pool，而这个变量在之前已经初始化过了，在之前一共初始化了7种mem_pool
+				get_new_dict具体实现了mem_get(THIS->ctx->dict_pool),这个THIS就是当前线程this_xlator_key对应的xlator值，参数是mem_pool类型，返回值是dict_t类型， 
+				struct dict{
+				unsigned char 	is_static:1;
+				int32_t			hash_size;
+				int32_t			count;
+				int32_t			refcount;
+				data_pair_t		**members;	//存了data_pair_t指针的数组地址
+				data_pair_t		*member_list;//它链接了data_pair_t
+				char			*extra_free;
+				char			*extra_stdfree;
+				gf_lock_t		lock;
+				data_pair_t		*members_internal;
+				data_pair_t		free_pair;
+				gf_boolean_t	free_pair_in_use;
+			}
+			struct data_pair{
+				struct data_pair	*hash_next;
+				struct data_pair	*prev;
+				struct data_pair	*next;
+				data_t				*value;
+				char				*key;
+			}
+			struct data{
+				unsigned char	is_static:1;
+				unsigned char	is_const:1;
+				int32_t			len;
+				char			*data;
+				int32_t			refcount;
+				gf_lock_t		lock;
+			}
+			2.2.2.2 xlator_set_type (ixl, type)设置translator类型，根据类型载入相应的动态库和函数，此时ixl->type=="features/worm"，将XLATORDIR/type拼接，打开此动态库,将动态库句柄给ixl->dlhandle,
+				2.2.2.2.1获取动态库中fops、cbks操作函数地址,其中fops和ckbs是worm.c中的两个结构体，fop中有一堆操作函数（open，write，read...）
+				2.2.2.2.2 获取class_methods如果不存在，说明操作函数没有整合，直接一个一个获取
+					2.2.2.2.2.1：分别有init,fini,reconfigure,notify
+					2.2.2.2.2.2：init：申请一个mem_pool以及的mem_get0(),mem_pool会直接给ixl->local_pool,调用GF_OPTION_INIT ("worm", priv->readonly_or_worm_enabled,bool, out)，
+						2.*.1GF_OPTION_INIT具体实现：xlator_option_init_##type (xlator_t *this, dict_t *options, char*key,type_t*val_p)此this为全局的THIS，option=THIS->options,val_p=0/1(是否使能worm只读)
+							2.*.1.1xlator_volume_option_get (this, key)验证传入的key是否正确，返回xlator->volume_option链表中对应的volume_opt_list->given_opt(也就是动态库的options结构体)
+							2.*.1.2dict_get_str(this,key,str)
+								1.hashval = SuperFastHash (key, strlen (key)) % this->hash_size ；哈希值计算并取于
+								2.循环dict->member链接的data_pair_t,如果找到key，则返回该data_pair_t
+								3.将给data_pair_t->value返回，先返回一个data_t，再将data_t->data返回给str
+							2.*.1.3 xlator_option_validate (this, key, value, opt, NULL),针对options[].type有许多对应的函数，现在开始将n个函数指针指向这些函数，然后执行，以worm，bool为例应该执行xlator_option_validate_bool（this, key, value, opt, NULL），此函数的具体作用是：主要是检查了value是不是1/0,on/off?
+					2.2.2.2.2.2:fini
+						2.2.2.2.2.2.1  ixl->privater==priv，mem_put（priv）此函数会将priv代表的池链表缴入到list->pool-hot_list热链表中，然后将private置为NULL，
+					2.2.2.2.2.3:notify没有实现
+				2.2.2.2.3获取dumpops（没有实现
+				2.2.2.2.4 mem_acct_init
+					有个gf_common_mem_types枚举，里面有各种类型的mem，最后一个成员是153，
+					xlator_mem_acct_init (this, gf_read_only_mt_end + 1)申请了 mem_acct +154*mem_acct_rec 大小的内存，其中mem_acct_rec[]是mem_acct中的一个数组,将refcnt置为1，初始化每个rec，
+					struct mem_acct{
+						uint32_t 	num_types;
+						gf_lock_t	lock;
+						unsigned int refcntl
+						struct mem_acct_rec rec[0];
+					}
+					struct mem_acct_rec{
+						const char *typestr;
+						size_t		size;
+						size_t		max_size;
+						uint32_t	num_allocs;
+						uint32_t	total_allocs;
+						uint32_t	max_num_allocs;
+						gf_lock_t	lock;
+					}
+					
+				2.2.2.2.5新创建一个（volume_opt_list_t类型对象）,给他成员赋值vol_opt->given_opt =dlsym(options),（option为结构体，此结构体具体作用是：******************？），并将此vol_opt->list添加到ixl->volume_options链表中，列举其中几个参数说明：
+					default-retention-period 文件保留时间
+					retention-mode  保留模式
+				2.2.2.2.6 fill_defaults初始化此xlator其余的参数，检查设置所有的文件操作，如果此xlator->fop中没有实现，则将系统的对应文件操作符给它，上步没有实现的notify赋值为default_notify（此函数的作用具体是：****************？）
+			2.2.2.3glusterfs_xlator_link (ixl, graph->top)，目前认为graph->top指向的是graph-yyparse()解析时的那个xlator，它有两个xlator_list结构体，分别为parents和children，现在将当前新创建的xlator所在的xlator_list链在第一个xlator->parents的末尾，将第一个xlator所在的xlator_list链在当前xlator->children末尾
+			2.2.2.4glusterfs_graph_set_first (graph, ixl) 将当前创建的xlator给graph->first,xl_count++,并将此计数值给xlator->xl_id,可以表示出它是graph的第几个xl
+		2.2.3fill_uuid (graph->graph_uuid, 128)将时间和主机名,pid组成的字串给graph->uuid[128]
+		2.2.4 gf_add_cmdline_options (glusterfs_graph_t *graph, cmd_args_t *cmd_args)循环ctx_args结构体
+			struct xlator_cmdline_option{
+				struct list_head 	cmd_args;
+				char				*volume;
+				char				*key;
+				char				*value;
+			}
+			循环方法，ctx_args->xlator_options（list_head）链在xlator_cmdline_option的cmd_args上
+			
+			
+	2.3glusterfs_graph_activate (graph, ctx)初始化各个translator，创建socket
+		2.3.1glusterfs_graph_validate_options (graph)验证卷配置文件中的options 参数的有效性
+		2.3.2glusterfs_graph_init (graph)循环每个xlator（业务逻辑看只有一个xlator）
+			2.3.2.1 mem_acct_init
+			2.3.2.2 init 调用glusterd.c中的init(graph->fisrt(xlator));
+				2.3.2.2.1设置rundir为/run/gluster
+				2.3.2.2.2 glusterd_find_correct_var_run_dir()
+				2.3.2.2.3 glusterd_init_var_run_dirs (this, var_run_dir,GLUSTERD_DEFAULT_SNAPS_BRICK_DIR)  //第三个参数为gluster/snaps,第二个是/run   作用是创建/run/gluster/snaps
+				2.3.2.2.4 分别设置/var/run/gluster/下面几个文件目录
+				2.3.2.2.5 cmd_log_filename= /log/glusterfs/cmd_history.log
+				2.3.2.2.6 /var/lib/glusterd/vols ,/var/run/gluster/vols /var/lib/glusterd/snaps ,peers,...
+				2.3.2.2.7 glusterd_rpcsvc_options_build (this->options)设置rpc-listen数为128
+				2.3.2.2.8 rpcsvc_init (this, this->ctx, this->options, 64)
+					rpcsvc_t *svc；
+					2.3.2.2.8.1 rpcsvc_init_options (svc, options) //没有动作
+					2.3.2.2.8.2 rpcsvc_auth_init (svc, options)
+						根据options设置svc的参数
+						2.3.2.2.8.2.1 rpcsvc_set_allow_insecure (svc, options)
+						2.3.2.2.8.2.2 rpcsvc_set_root_squash (svc, options);
+						2.3.2.2.8.2.3 rpcsvc_set_addr_namelookup (svc, options)
+						
+						2.3.2.2.8.2.4 rpcsvc_auth_add_initers (svc)，创建4个rpcsvc_auth_list，并链接在list后
+						2.3.2.2.8.2.5 rpcsvc_auth_init_auths (svc, options)
+							1. 新增几个options链表
+							2. 循环svc->authschemes链表
+带细化验证****************************2.1 rpcsvc_auth_init_auth (svc, options, auth)***************
+					2.3.2.2.8.3 rpcsvc_program_register (svc, &gluster_dump_prog) //rpcsvc.c,新增一个rpcsvc_program_t链接到svc->programs链表上
+				2.3.2.2.9 rpcsvc_register_notify (rpc, glusterd_rpcsvc_notify, this)
+					申请一个rpcsvc_notify_wrapper_t *wrapper，并初始化
+				
+				2.3.2.2.10 rpcsvc_create_listeners (rpc, this->options, this->name)
+					循环两次：
+					第一次：transport_name ==socket.management, "transport-type"对应的值为socket
+					1. rpcsvc_create_listener (svc, options, transport_name)
+						1.1 //动态载入相应类型的RPC 库并调用库的init初始化trans = rpc_transport_load (svc->ctx, options, name)与cli端的8.2.3.3 流程一致
+						1.2 rpc_transport_listen (trans) --socket.c:socket_listen (rpc_transport_t *this)
+							1.2.1 socket_server_get_local_sockaddr (this, SA (&sockaddr),&sockaddr_len, &sa_family)
+								1.2.1.1 根据options设置sa_family参数（设为了默认值AF_INET）
+								1.2.1.2 af_inet_server_get_local_sockaddr (this, addr, addr_len)，由于inet相关的参数没有设置，因此此函数并没有初始化
+							1.2.2 创建socket sock=13,此处的socket应该是AF_INET类型的通信，addr->sa_family=AF_INET,port=24007 猜测是用来与熊其他节点通信四使用
+							1.2.3 设置不适用nagle算法,设置sock不阻塞
+							1.2.4 __socket_server_bind (this)
+								设置端口可重用，直接bind;sa_data = "]\307\000\000\000\000!\000\000\000\000\000\000"  //?????
+							1.2.5 listen (priv->sock, priv->backlog)
+							1.2.6 event_register (ctx->event_pool, priv->sock,socket_server_event_handler,this, 1, 0)							
+								handle =socket_server_event_handler (int fd, int idx, void *data,int poll_in, int poll_out, int poll_err)
+								1.2.6.1 event_register_epoll(event_pool, fd, handler, data,poll_in, poll_out)
+									1.2.6.1.1 event_slot_alloc (event_pool, fd) 按顺序将fd写入（1024*1024的二维）ereg[].table[].fd中
+									1.2.6.1.2 event_slot_get(event_pool,idx)
+									通过idx找到对应的table[i],并对其refcount++	
+									1.2.6.1.3 填充slot（table[i]）的值，给epoll_event
+									1.2.6.1.4 epoll_ctl (event_pool->fd, EPOLL_CTL_ADD, fd,&epoll_event)
+									返回idx
+						1.3 rpc_transport_register_notify (trans, rpcsvc_notify, svc)
+					第二次：transport_name ==rdma.management, "transport-type"对应的值为rdma,在rpc_transport_load (svc->ctx, options, name)直接返回NULL了
+					返回count
+				2.3.2.2.11 for循环7次
+					struct rpcsvc_program *gd_inet_programs[] = {
+								&gd_svc_peer_prog,
+								&gd_svc_cli_trusted_progs, /* Must be index 1 for secure_mgmt! */
+								&gd_svc_mgmt_prog,
+								&gd_svc_mgmt_v3_prog,
+								&gluster_pmap_prog,
+								&gluster_handshake_prog,
+								&glusterd_mgmt_hndsk_prog,
+					};
+					1.glusterd_program_register (this, rpc, gd_inet_programs[i])
+						1.1 rpcsvc_program_register (svc, prog);prog=gd_inet_programs[i]:将新传进来的prog链接到svc->programs链表上
+				
+				2.3.2.2.12 glusterd_init_uds_listener (this)
+					1.sockfile设置为默认值/run/glusterd.socket
+					2. 新申请一个dict_t的options，目前为空
+					3. rpcsvc_transport_unix_options_build (&options, sockfile)
+						新申请dict_t的dict，分别设置四个data_pair_t
+						3.1 "transport.socket.listen-path":/run/glusterd.socket
+						3.2 "transport.address-family" :unix
+						3.3 "transport.socket.nodelay":off
+						3.4 "transport-type":socket
+						options =dict
+					4. rpcsvc_init (this, this->ctx, options, 8) 参考2.3.2.2.8的流程
+					5. rpcsvc_register_notify (rpc, glusterd_rpcsvc_notify, this)
+						新申请一个wrapper->notify = glusterd_rpcsvc_notify()
+					6. rpcsvc_create_listeners (rpc, options, this->name)
+						循环一次
+						6.1rpcsvc_create_listener (svc, options, transport_name)
+							6.1.1 载入相应动态库
+							6.1.2 socket_listen (rpc_transport_t trans )
+								6.1.2.1 server_fill_address_family (this, &addr->sa_family)设置sa_famliy和sa_data
+								6.1.2.2 __socket_server_bind (trans)
+								6.1.2.3 listen()
+								6.1.2.4 event_register()并返回注册的序号
+									注册处理函数socket_server_event_handler (int fd, int idx, void *data,int poll_in, int poll_out, int poll_err)
+						6.2 rpc_transport_register_notify (trans, rpcsvc_notify, svc)
+						注册trans->notify函数rpcsvc_notify (rpc_transport_t *trans, void *mydata,rpc_transport_event_t event, void *data, ...)
+						6.3 rpcsvc_listener_alloc (svc, trans)
+					7. for循环7次
+						7.1 glusterd_program_register (this, rpc, gd_inet_programs[i])
+							7.1.1 rpcsvc_program_register (svc, prog);prog=gd_inet_programs[i]:将新传进来的prog链接到svc->programs链表上
+				2.3.2.2.13 glusterd_conf_t conf,并赋值
+				2.3.2.2.14 glusterd_hooks_create_hooks_directory (conf->workdir)
+					//根据glusterd_hook_dirnames结构体中设置过的参数创建hooks/1/下面对应的文件夹，并在此文件夹下创建pre、post子目录
+					char glusterd_hook_dirnames[GD_OP_MAX][256] =
+					{
+							[GD_OP_NONE]                    = EMPTY,
+							[GD_OP_CREATE_VOLUME]           = "create",
+							[GD_OP_START_BRICK]             = EMPTY,
+							[GD_OP_STOP_BRICK]              = EMPTY,
+							[GD_OP_DELETE_VOLUME]           = "delete",
+							[GD_OP_START_VOLUME]            = "start",
+							[GD_OP_STOP_VOLUME]             = "stop",
+							[GD_OP_DEFRAG_VOLUME]           = EMPTY,
+							[GD_OP_ADD_BRICK]               = "add-brick",
+							[GD_OP_REMOVE_BRICK]            = "remove-brick",
+							[GD_OP_REPLACE_BRICK]           = EMPTY,
+							[GD_OP_SET_VOLUME]              = "set",
+							[GD_OP_RESET_VOLUME]            = "reset",
+							[GD_OP_SYNC_VOLUME]             = EMPTY,
+							[GD_OP_LOG_ROTATE]              = EMPTY,
+							[GD_OP_GSYNC_CREATE]            = "gsync-create",
+							[GD_OP_GSYNC_SET]               = EMPTY,
+							[GD_OP_PROFILE_VOLUME]          = EMPTY,
+							[GD_OP_QUOTA]                   = EMPTY,
+							[GD_OP_STATUS_VOLUME]           = EMPTY,
+							[GD_OP_REBALANCE]               = EMPTY,
+							[GD_OP_HEAL_VOLUME]             = EMPTY,
+							[GD_OP_STATEDUMP_VOLUME]        = EMPTY,
+							[GD_OP_LIST_VOLUME]             = EMPTY,
+							[GD_OP_CLEARLOCKS_VOLUME]       = EMPTY,
+							[GD_OP_DEFRAG_BRICK_VOLUME]     = EMPTY,
+							[GD_OP_RESET_BRICK]             = EMPTY,
+					};
+				2.3.2.2.15 configure_syncdaemon (glusterd_conf_t *conf)
+					1.glusterd_check_gsync_present (&valid_state);valid_state =-1
+						runner_t runner;
+						1.1 runner_start (runner_t *runner)
+							1.1.1 创建两个pipe，将chio[1]绑定了pi[1][0]（并使一个标准的I/O流与该描述符相结合）； fork()
+							1.1.2子进程：关闭刚才的两个pipe的读端口，并将标准输出定向到pi[1][1]管道；打开/pro/self/fd目录，循环关闭文件描述符（除过0，1，2，xpi[1]），
+								 1.1.2.1 执行gsyncd，传入参数execvp (runner->argv[0], runner->argv)；
+									；资料显示这个异地容灾的源码？？，前两个参数是子进程提前处理好的，后两个是runner_start传进来的
+									1.1.2.1.1 python /usr/local/libexec/glusterfs/python/syncdaemon/gsyncd.py /usr/local/libexec/glusterfs/gsyncd --version,
+								 1.1.2.2 向xpi[1]写端口写数据（写的是errno= 17） 
+							1.1.3父进程：关闭两个pipe的写端口,读取xpi[0]数据 （17）然后return 0；？？没有用到pi[1]作用是什么？errno是怎么得来的？
+						1.2 fgets从chio[1]即子进程的pi[1][0]标准输出读数据
+						1.3 runner_end (&runner) 释放申请的内存
+					2.glusterd_crt_georep_folders (georepdir, conf)
+						2.1 设置并创建 /var/lib/glusterd/geo-replication
+						2.2 创建/log/glusterfs/geo-replacation
+						2.3 创建/log/glusterfs/geo-replacation-slaves
+						2.4 创建/log/glusterfs/geo-replacation-slaves/mbr
+					3. runinit_gsyncd_setrx (&runner, conf); //重新申请内存给runner->argv,并添加多个参数
+						argv[0]：/usr/local/libexec/glusterfs/gsyncd
+						argv[1]：-c
+						argv[2]：/var/lib/glusterd/geo-replication/gsyncd_template.conf
+						argv[3]：--config-set-rx
+						argv[4]：remote-gsyncd
+						argv[5]：/usr/local/libexec/glusterfs/gsyncd
+						argv[6,7]：.
+					4. RUN_GSYNCD_CMD
+						4.1 runner_start (runner)
+						4.2	runner_end_reuse (runner_t *runner)等待chpid的子进程，关闭chio返回-ret
+						4.2 runner_end 释放申请的内存
+					5. 重新添加参数并执行（多次）
+				2.3.2.2.16 glusterd_restore_op_version (this) 恢复
+					1. glusterd_retrieve_op_version (this, &op_version)检索,新申请一个handle内存
+						1.1 gf_store_handle_retrieve (path, &handle) path=/var/lib/glusterd/glusterd.info
+							1.1.1 gf_store_handle_new (path, handle)
+								1.1.1.1 gf_store_sync_direntry (spath) 将open(path)的数据由内核缓存写到磁盘
+						1.2. gf_store_retrieve_value (priv->handle, GD_OP_VERSION_KEY,&op_version_str)  GD_OP_VERSION_KEY：operating-version 获取glusterd.info的一些信息,op_version=31004
+					2. glusterd_retrieve_uuid()
+					-----=======================================------------------------------------------------------------=---------------------------
+				2.3.2.2.17 glusterd_restore () *************************恢复状态*******************************
+					1. glusterd_options_init (this)
+						path =/var/lib/glusterd/options
+						1.1 glusterd_store_retrieve_options (this) 读取文件内容,以等号分割，key为左边 value为右边,并将其设置到dict
+						1.2 dict_set_str (priv->opts, GLUSTERD_GLOBAL_OPT_VERSION,initial_version) 设置"global-option-version" = 0
+						1.3 glusterd_store_options (this, priv->opts)
+					2. glusterd_store_retrieve_volumes (this, NULL)
+						2.1 path=/var/lib/glusterd/vols
+						2.2
+						
+					3. glusterd_store_retrieve_peers (this)
+						
+						3.3 glusterd_friend_rpc_create (this, peerinfo, &args)循环/var/lib/glusterd/peers下的节点状态，与每个节点重新rpc连接
+					4. glusterd_store_retrieve_snaps (this)
+					5. glusterd_resolve_all_bricks (this)
+					6. glusterd_snap_cleanup (this)
+					7. glusterd_recreate_all_snap_brick_mounts (this)
+				2.3.2.2.18 glusterd_handle_upgrade_downgrade (this->options, conf, upgrade,downgrade)
+				2.3.2.2.19 glusterd_hooks_spawn_worker (this)
+				2.3.2.2.20 event_reconfigure_threads (this->ctx->event_pool,workers)
+					
+			
+					
+		2.3.3 glusterfs_graph_unknown_options (graph) 检查key是否有对应options
+			2.3.3.1dict_foreach (xl->options, _log_if_unknown_option, xl)，options指向的是申请的内存池
+		2.3.4  list_add (&graph->list, &ctx->graphs) 将graph->list链在ctx->graph上
+		2.3.5 之前备注ctx->master ==fuse,那么glusterd暂时不处理（待验证）
+		2.3.6 glusterfs_graph_parent_up (graph)主要调用了notify函数，如果是default_notify，值循环遍历了一遍
+	2.4 gf_log_dump_graph (fp, graph)
+
+		
+		
+	

@@ -1,0 +1,2 @@
+1.cli_batch
+	1.1 cli_cmd_process (state, state->argc, state->argv)

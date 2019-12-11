@@ -1,0 +1,169 @@
+																			event_dispatch_epoll_handler
+
+0.handler (fd, idx, data,(event->events & (EPOLLIN|EPOLLPRI)),(event->events & (EPOLLOUT)),(event->events & (EPOLLERR|EPOLLHUP)))
+	因为是数据读入请求，所以调用的是：socket_event_handler（） 
+	EPOLLIN=1，调用socket_event_poll_in（）
+1. socket_proto_state_machine (rpc_transport_t *this,rpc_transport_pollin_t **pollin)
+	1.1 从gdb来看trans->private->incoming->record_state == SP_STATE_NADA,   起始应该是0；初始化之后，将record_state置为SP_STATE_READING_FRAGHDR
+	1.2  __socket_readv (this, in->pending_vector, 1,&in->pending_vector, &in->pending_count, NULL)
+		1.2.1 __socket_rwv (this, vector, count,pending_vector, pending_count, bytes, 0)
+			参数说明： bytes=NULL count =1
+			1.2.1.1  __socket_cached_read (this, opvector, opcount)
+				参数说明： opvector=vertor;  opcount=1 表示读一次，返回读取的长度
+				1.2.1.2.1  __socket_ssl_readv (this, opvector, opcount)
+					调用sys_readv (sock, opvector, IOV_MIN(opcount))
+					参数说明： sock=this->priv->sock,,将sock对应缓存区的数据读入到opvector
+			1.2.1.2 this->total_bytes_read += ret (ret =4)
+			1.2.1.3 将opvector给pending_vector,将opcount=0给pending_count
+		将record_state置为SP_STATE_READ_FRAGHDR
+	1.3 iobuf_get2 (struct iobuf_pool *iobuf_pool, size_t page_size)
+		1.3.1 根据page_size计算所在iobuf大小的序号
+		1.3.2__iobuf_select_arena（）查找iobuf为rounded_size大小的、状态是passive_cnt的arena，注意每种类型的arena不是一个，是用链表连起来的
+		1.3.3 __iobuf_get (iobuf_arena, rounded_size)
+			1.3.3.1 从arena的passive（消极未使用的链表中）拿出一个iobuf，并将passive_cnt--，放到active链表中，将active_cnt++,如果 passive_cnt减到0了，表示此arena已经全部用完，将此arena从原链表中删除，链到iobuf_pool->filled[i]中，最终返回iobuf
+		1.3.4 frag->fragcurrent=iobuf->ptr, 标志置为SP_STATE_READING_FRAG	
+	1.4  __socket_read_frag (this)
+		1.4.1 frag-state =0
+			1.4.1.1__socket_proto_init_pending (priv, RPC_MSGTYPE_SIZE)
+			标志置为SP_STATE_READING_MSGTYPE
+	1.5 *pollin = rpc_transport_pollin_alloc (this,vector,count,in->iobuf,iobref,in->request_info) 新申请一个rpc_transport_pollin_t，
+2. rpc_transport_notify (this, RPC_TRANSPORT_MSG_RECEIVED,pollin)
+		1.4.1 rpcsvc_notify (rpc_transport_t *trans, void * this->mydata,rpc_transport_event_t event, void *data =pollin, ...)
+			1.4.1.1. rpcsvc_handle_rpc_call (svc, trans, msg) msg==pollin；svc=rpcsvc_t svc/rpc
+				1.4.1.1.1 rpcsvc_request_create (svc, trans, msg)
+					1. rpcsvc_alloc_request (svc, req),申请内存池给req（rpcsvc_request_t）：mem_get ((svc)->rxpool)
+					2. xdr_to_rpc_call，此处使用xdr来解码消息，避免不同主机导致消息的不一致
+						2.1 xdr_callmsg (&xdr, call) 获取xdrmem_create缓存中的消息rpc_msg *call并解码（前提要找到此缓存中的编码消息，msgbuf = msg->vector[0].iov_base）
+					3. rpcsvc_request_init (svc, trans, &rpcmsg, progmsg, msg, req)对req赋值
+						3.1 rpcsvc_auth_request_init (req, callmsg)对req赋值
+							3.1.1 rpcsvc_auth_get_handler (req) 循环变量rpcsvc_t->authschemes,当满足条件auth->authnum == req->cred.flavour时，拿到auth（鉴权）,gdb调试发现拿到的auth为：
+								{authname = "AUTH_GLUSTERFS-v2", '\000' <repeats 14 times>, authnum = 390039, authops = 0x7ffff7ae58a0 <auth_glusterfs_ops_v2>, authprivate = 0x0}，此request_init为return 0
+								在前面graph初始化中rpcsvc_auth_init初始化rpcsvc_auth_add_initers函数中，rpcsvc_auth_add_initer函数将四种鉴权方式链接在了rpcsvc_t->authschemes链表上，并注册了四种方式对应的消息数据，分别为：
+								"auth-glusterfs"： 		rpcsvc_auth_glusterfs_init
+									例：rpcsvc_auth_t rpcsvc_auth_glusterfs = {
+																						.authname       = "AUTH_GLUSTERFS",
+																						.authnum        = AUTH_GLUSTERFS,
+																						.authops        = &auth_glusterfs_ops,
+																						.authprivate    = NULL
+																				};
+								 "auth-glusterfs-v2"：	rpcsvc_auth_glusterfs_v2_init
+									{
+										.transport_init         = NULL,
+										.request_init           = auth_glusterfs_v2_request_init,(空函数)
+										.authenticate           = auth_glusterfs_v2_authenticate
+									}
+								 "auth-unix"：			rpcsvc_auth_unix_init
+								 "auth-null" ：			rpcsvc_auth_null_init
+							3.1.2 auth->authops->request_init（），请求初始化 直接返回0
+						struct rpc_msg:{
+							rm_xid = 1,
+							rm_direction = CALL,
+							ru ，
+						}
+
+					4. rpcsvc_request_outstanding (req, +1)
+					5. rpcsvc_authenticate (rpcsvc_request_t *req)
+						5.1 rpcsvc_auth_get_handler (req) 循环rpcsvc_t->authschemes,找到rpcsvc_request_t  *req（也就是cli传过来的消息）对应的鉴权模式
+						5.2 调用auth_glusterfs_v2_authenticate（req, auth->authprivate ==NULL）
+							5.2.1 xdr_auth_glusterfs_parms_v2 (&xdr, au) 从xdr中读数据给au，在将au数据给req，将au free掉，最后返回RPCSVC_AUTH_ACCEPT =1
+					6. req->rpc_status =MSG_ACCEPTED(鉴权完成，置为此标记 =0)	
+						
+				1.4.1.1.2 rpcsvc_request_accepted (req)	验证rpc_status状态  返回成功
+				1.4.1.1.3 rpcsvc_program_actor (req)
+					循环svc->programs链表,找到与req->prognum一致的成员：rpcsvc_program_t *program
+					{progname = "GlusterD svc cli", '\000' <repeats 15 times>, prognum = 1238463, progver = 2, options = 0x0, progport = 0, 
+					actors = 0x7fffecb04d80 <gd_svc_cli_actors>, numactors = 49, proghighvers = 0, proglowvers = 0, private = 0x0, notify = 0x0, min_auth = 0, synctask = _gf_true, 
+					program = {next = 0x6a1088, prev = 0x6a0238}}
+						拿到的这个program中的actors是gluster命令对应的数组集，如下：一共有program->numactors =49个元素,且每整10个为空
+						gdb) p program->actors[3]
+						$73 = {procname = "LIST_FRIENDS", '\000' <repeats 19 times>, procnum = 3, actor = 0x7fffec7b9a90 <glusterd_handle_cli_list_friends>, vector_sizer = 0x0, 
+						  unprivileged = _gf_false, op_type = DRC_NA}
+						(gdb) p program->actors[1]
+						$74 = {procname = "CLI_PROBE", '\000' <repeats 22 times>, procnum = 1, actor = 0x7fffec7b9a70 <glusterd_handle_cli_probe>, vector_sizer = 0x0, 
+						  unprivileged = _gf_false, op_type = DRC_NA}
+						(gdb) p program->actors[0]
+						$75 = {procname = '\000' <repeats 31 times>, procnum = 0, actor = 0x0, vector_sizer = 0x0, unprivileged = _gf_false, op_type = DRC_NA}
+						(gdb) p program->actors[2]
+						$76 = {procname = "FRIEND_REMOVE", '\000' <repeats 18 times>, procnum = 2, actor = 0x7fffec7b9a80 <glusterd_handle_cli_deprobe>, vector_sizer = 0x0, 
+						  unprivileged = _gf_false, op_type = DRC_NA}
+						(gdb) p program->actors[4]
+						$77 = {procname = "CLI_CREATE_VOLUME", '\000' <repeats 14 times>, procnum = 4, actor = 0x7fffec855650 <glusterd_handle_create_volume>, vector_sizer = 0x0, 
+						  unprivileged = _gf_false, op_type = DRC_NA}
+						(gdb) p program->actors[5]
+						$78 = {procname = "GET_VOLUME", '\000' <repeats 21 times>, procnum = 5, actor = 0x7fffec7b9aa0 <glusterd_handle_cli_get_volume>, vector_sizer = 0x0, 
+						  unprivileged = _gf_false, op_type = DRC_NA}
+						(gdb) p program->actors[6]
+						$79 = {procname = '\000' <repeats 31 times>, procnum = 0, actor = 0x0, vector_sizer = 0x0, unprivileged = _gf_false, op_type = DRC_NA}
+						(gdb) p program->actors[7]
+						$80 = {procname = "DELETE_VOLUME", '\000' <repeats 18 times>, procnum = 7, actor = 0x7fffec855680 <glusterd_handle_cli_delete_volume>, vector_sizer = 0x0, 
+						  unprivileged = _gf_false, op_type = DRC_NA}
+						(gdb) p program->actors[8]
+						$81 = {procname = "START_VOLUME", '\000' <repeats 19 times>, procnum = 8, actor = 0x7fffec855660 <glusterd_handle_cli_start_volume>, vector_sizer = 0x0, 
+						  unprivileged = _gf_false, op_type = DRC_NA}
+						(gdb) p program->actors[9]
+						$82 = {procname = "STOP_VOLUME", '\000' <repeats 20 times>, procnum = 9, actor = 0x7fffec855670 <glusterd_handle_cli_stop_volume>, vector_sizer = 0x0, 
+						  unprivileged = _gf_false, op_type = DRC_NA}
+						 p program->actors[10]
+						$83 = {procname = '\000' <repeats 31 times>, procnum = 0, actor = 0x0, vector_sizer = 0x0, unprivileged = _gf_false, op_type = DRC_NA}
+					最终将此actor返回
+				1.4.1.1.4 rpcsvc_need_drc (rpcsvc_request_t *req) drc =NULL返回0
+				1.4.1.1.5  synctask_new (THIS->ctx->env,(synctask_fn_t) actor_fn,rpcsvc_check_and_reply_error, NULL,req) 
+						参数说明： THIS = svc->xl(地址为 (xlator_t *) 0x65dcc0)，actor_fn=glusterd_handle_cli_list_friends（）
+						1. synctask_new1 (env, 0, fn, cbk, frame, opaque)
+							参数说明： fn=actor_fn,cbk=rpcsvc_check_and_reply_error(),frame=NULL,opaque=(void *)req
+							1.1 synctask_create (env, stacksize, fn, cbk, frame, opaque)
+								参数说明：stacksize =0 frame=NULL
+								申请struct synctask *newtask，初始化它的参数
+								创建上下文，ctx，指向synctask_wrap（newtask）
+								1.1.1 synctask_wake (struct synctask *task) 
+									1.1.1.1 __run (struct synctask *task)
+										将task->state 置为SYNCTASK_RUN，添加到evn->runq链表中
+									1.1.1.2 pthread_cond_broadcast (&env->cond) 唤醒条件锁
+								1.1.2 syncenv_scale(env)
+									子线程：1.1.2.1 gf_thread_create 多线程调用syncenv_processor (void *thdata)参数说明 thdata =env->proc[i]
+												1.1.2.1.1 syncenv_task (proc)
+												1.1.2.1.2 synctask_switchto (task)
+													保存当前的task到线程私有key中；协程保存现在的上下文，调用task->ctx中保存的上下文即synctask_wrap（newtask）
+														1.获取保存在线程私有key中的task，
+														2.执行task-fn(req),即glusterd_handle_cli_list_friends（） glusterd-handle.c中实现每个命令的操作
+															1.__glusterd_handle_cli_list_friends（req）
+																1.1 xdr_to_generic (req->msg[0], &cli_req,(xdrproc_t)xdr_gf1_cli_peer_list_req)
+																	通过xdr解码出msg[0].iov_base中的数据
+																	返回数据长度
+																1.2 glusterd_list_friends (req, dict, cli_req.flags)
+																	1.2.1.利用rcu机制 遍历THIS->private->peers,将每个peer信息glusterd_peerinfo_t添加到dict中，具体添加：%d对应的是序号
+																		friend%d.uuid ：uuid_str (f2e2fcec-d735-445f-9a37-9c82cbbefd4c)
+																		friend%d.hostname：hostname （node01）
+																		friend%d.port：port  （0）
+																		friend%d.stateId : （GD_FRIEND_STATE_BEFRIENDED =3）
+																		friend%d.state  "Peer in Cluster"
+																		friend%d.connected (1)
+																		count :1
+																	1.2.2.dict_allocate_and_serialize (friends, &rsp.friends.friends_val,&rsp.friends.friends_len)
+																			//rsp.friends.friends_val = peer个数(4字节)+(key长度(4)+value长度(4)+key+value)+(第二个节点信息)+(...)
+																			//rsp.friends.friends_len = dict中所有元素key与value字符的长度总和及描述长度的int*n
+																	1.2.3 glusterd_submit_reply (req, &rsp, NULL, 0, NULL,(xdrproc_t)xdr_gf1_cli_peer_list_rsp)
+																		新申请iobref->iobrefs*16
+																		1.2.3.1 glusterd_serialize_reply (req, arg, &rsp, xdrproc)
+																			参数说明： arg=rsp; rsp=struct iovec; xdrproc =xdr_gf1_cli_peer_list_rsp
+																			1.2.3.1.1 xdr_sizeof (xdrproc, arg) 计算大小
+																			1.2.3.1.2 iobuf_get2 (req->svc->ctx->iobuf_pool, rsp_size) 申请iobuf
+																			1.2.3.1.3 iobuf_to_iovec (iob, outmsg) 将申请到的iob的数据地址给outmsg->ivo_base
+																			1.2.3.1.4 xdr_serialize_generic (*outmsg, arg, xdrproc) 将arg（前面的rsp）消息编码放到outmsg中
+																			返回iobuf
+																		1.2.3.2 iobref_add (iobref, iob) 将返回的iob放到iobref->iobrefs[i]
+																		1.2.3.3 rpcsvc_submit_generic (req, &rsp, 1, payload, payloadcount,iobref) 消息发送给cli端
+																			参数说明：rsp =outmsg; playload =NULL  payloadcount=0
+																			1.2.3.3.1 rpcsvc_record_build_record (req, msglen, hdrlen, &recordhdr)
+																			1.2.3.3.2 rpcsvc_need_drc (req)
+																				1.2.3.3.2.1 rpcsvc_program_actor (req)
+																			1.2.3.3.3 rpcsvc_transport_submit (trans, &recordhdr, 1, proghdr, hdrcount,payload, payloadcount, iobref,req->trans_private)
+																				1. rpc_transport_submit_reply (trans, &reply)
+																					1.1socket_submit_reply
+														3. 将task->state置为 SYNCTASK_DONE	
+														4. synctask_yield (task) 返回上下文task->proc->sched)  参数说明：task=保存在线程私有key中的task，即调用点
+												1.1.2.1.3 syncenv_scale(env)回调
+3. priv->ot_state = OT_RUNNING;
+4.rpc_transport_pollin_destroy (pollin) 释放消息块
+								
+			

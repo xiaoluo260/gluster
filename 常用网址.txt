@@ -1,7 +1,0 @@
-常用网址：
-ruichi虚拟机管理：https://20.0.0.24:8006/#v1:0:=qemu%2F169:4:8::30:7:: root/ldz123
-linux社区：https://stackoverflow.com/
-https://blog.csdn.net/qiangweiloveforever/article/details/7566768
-https://blog.csdn.net/u010129347/article/details/43955397
-https://github.com/xiaoluo260/gluster.git
-https://github.com/gluster/glusterfs.git

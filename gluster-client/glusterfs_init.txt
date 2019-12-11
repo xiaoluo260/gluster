@@ -1,0 +1,632 @@
+在代码级别层上，GlusterFS使用了xlator结构体定义保存了每一层信息，也就是说每一个功能都有自己的一个xlator结构体。每一层都会定义相同类型的operations函数以及相应的回调函数。glusterfs定义了STACK_WIND函数从某一层下发到另一个层，当执行结束则会调用STACK_UNWIND回调到上一层的函数
+
+													
+													glusterfs 初始化详细流程梳理
+1. 全局初始化
+2. parse_cmdline()
+	(gdb) p *cmd_args
+		$3 = {volfile_server = 0x43738 "node01", curr_server = 0x436e8, volfile_servers = {next = 0x436e8, prev = 0x436e8}, volfile = 0x0, log_server = 0x0, 
+		  log_level = GF_LOG_INFO, log_file = 0x0, log_ident = 0x0, logger = gf_logger_glusterlog, log_format = gf_logformat_withmsgid, log_buf_size = 5, 
+		  log_flush_timeout = 120, max_connect_attempts = 0, print_exports = 0x0, print_netgroups = 0x0, volfile_server_port = 0, volfile_server_transport = 0x0, 
+		  log_server_port = 0, pid_file = 0x0, sock_file = 0x0, no_daemon_mode = 0, run_id = 0x0, debug_mode = 0, read_only = 0, acl = 0, selinux = 0, capability = 0, 
+		  enable_ino32 = 0, worm = 0, mac_compat = 0, fopen_keep_cache = 2, gid_timeout = 0, gid_timeout_set = 0 '\000', aux_gfid_mount = 0, global_timer_wheel = 0, 
+		  xlator_options = {next = 0x21098, prev = 0x21098}, fuse_direct_io_mode = 2, use_readdirp = 0x0, no_root_squash = 0, volfile_check = 0, fuse_entry_timeout = -1, 
+		  fuse_negative_timeout = 0, fuse_attribute_timeout = -1, volume_name = 0x0, fuse_nodev = 0, fuse_nosuid = 0, dump_fuse = 0x0, client_pid = 0, client_pid_set = 0, 
+		  uid_map_root = 0, background_qlen = 0, congestion_threshold = 0, fuse_mountopts = 0x0, mem_acct = 1, resolve_gids = 0, mount_point = 0x437c0 "/mnt/", 
+		  volfile_id = 0x43780 "vg0", brick_port = 0, brick_name = 0x0, brick_port2 = 0, secure_mgmt = 0, oom_score_adj = 0x0, event_history = 0x0}
+	2.1 secure_mgmt =0 ,cmd_args->volfile_server =node01 cmd_args->volfile_id =vg0
+	2.2 gdb显示未走到 
+		#ifdef GF_DARWIN_HOST_OS
+        if (cmd_args->mount_point)
+               cmd_args->mac_compat = GF_OPTION_DEFERRED;
+		#endif
+3.create_fuse_mount (glusterfs_ctx_t *ctx)
+	\xlators\mount\fuse\src\fuse-bridge.c
+	3.1 xlator_t  *master；//此层是fuse层
+	3.2 master->name="fuse"
+		master->type="mount/fuse"
+	3.3 xlator_set_type()
+		3.3.1 xlator_dynload()
+		name ="/usr/local/lib/glusterfs/3.10.10/xlator/mount/fuse.so"
+		master->dlhandle = dopen(name)
+		master->fops =dlsym("fops")
+		master->cbks=dlsym("cbk"),
+		master->init = dlsym (handle, "init")
+		master->fini = dlsym (handle, "fini")
+		master->reconfigure=dlsym(handle,"reconfigure")
+		master->notify= dlsym (handle, "notify") notify中有启动线程去执行fuse_thread_proc检查fuse设备中IO请求消息
+		master->dumpops= dlsym (handle, "dumpops")
+		master->mem_acct_init= dlsym (handle, "mem_acct_init")
+		vol_opt->given_opt= dlsym (handle, "options"), 将vol_opt连在master->volume_options上
+		fill_defaults (xl)；master->fop中没有实现的功能使用默认填充
+	3.4 master->options  = get_new_dict ()
+	3.5 set_fuse_mount_options (ctx, master->options)
+		给options 赋值key-value ,第一个为mount_point
+		判断其余参数，主要是mount时 -o 后面跟的标志
+		第二个options的key-value为 key ="enable" ,value ="sync-to-mount"的data,
+	p *master
+	$7 = {name = 0x44488 "fuse", type = 0x444d0 "mount/fuse", instance_name = 0x0, next = 0x0, prev = 0x0, parents = 0x0, children = 0x0, options = 0x449a0, 
+	  dlhandle = 0x445a0, fops = 0xb605941c <fops>, cbks = 0xb6059324 <cbks>, dumpops = 0xb60592f8 <dumpops>, volume_options = {next = 0x44978, prev = 0x44978}, 
+	  fini = 0xb6048489 <fini>, init = 0xb60477dd <init>, reconfigure = 0x0, mem_acct_init = 0xb6047791 <mem_acct_init>, notify = 0xb6048545 <notify>, 
+	  loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0x0, 
+	  itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, 
+	  xl_id = 0}
+	3.6 xlator_init (master)
+		3.6.1 xl->mem_acct = MALLOC（）将里面的元素初始化为0
+		3.6.2 __xlator_init (xl)
+			1.fuse_private_t    *priv ；
+			master->private =(void *)priv;
+			priv->client_pid_set= 0
+			priv->direct_io_mode = 2
+			priv->fuse_dump_fd = -1
+			priv->fopen_keep_cache = 2
+			no_root_squash =false
+			priv->background_qlen =64
+			priv->congestion_threshold =48
+			cmd_args->volfile ="node01:vg0"
+			2. priv->fdtable = gf_fd_fdtable_alloc ()
+				fdtable->max_fds = 256
+				i=max_fds =256
+				priv->fdtable->fdentries[i].next_free=i+1
+			3.pipe(priv->status_pipe)
+			4.priv->fd = gf_fuse_mount (priv->mount_point, fsname, mntflags, mnt_args,sync_to_mount ? &ctx->mnt_pid : NULL,priv->status_pipe[1])
+				fsname ="node01:vg0"
+				mntflags =0
+				mnt_pid =0
+				mnt_args ="default_permissions,allow_other,max_read=131072"
+				pipe[1] 固定的写端
+				gf_fuse_mount (mountpoint=0x51030 "/mnt", fsname=fsname@entry=0x51078 "node01:vg0", mountflags=mountflags@entry=0, mnt_param=0x51968 "default_permissions,allow_other,max_read=131072", mnt_pid=0x21188, status_fd=status_fd@entry=7) at ../../../../contrib/fuse-lib/mount.c:333
+				4.1 pid = fork();
+				子进程
+					1.fuse_mount_sys (mountpoint, fsname, mountflags, mnt_param,fd)
+						1.1mount (source, mountpoint, fstype, mountflags,mnt_param_mnt)
+					2. write (status_fd, &ret, sizeof (ret)) 即将返回值 0 写到管道
+				主进程
+					*mnt_pid = pid，直接返回
+					priv->fd = open(/dev/fuse)
+			5. if (priv->event_history) false不执行
+			6. priv->event_recvd = 0
+			7. 循环gluster_fuse的接口
+				fuse_std_ops[i]是有函数实现的
+				fuse_dump_ops[i]没有实现，全部赋值为fuse_dumper()
+			8. priv->fuse_ops = fuse_std_ops
+		3.6.3 xl->init_succeeded = 1
+ 4. daemonize (ctx)                                          
+ 5. ret = glusterfs_volumes_init (ctx);
+	5.1 if cmd_args->volfile_server
+	5.2 glusterfs_mgmt_init (ctx); //和daemon监听端口建立连接完成
+	return ret
+ 6.event_dispatch (ctx->event_pool)	
+ 
+ *******************************************
+ 获取到vol信息之后 graph的xlator如下：
+ (gdb) p graph->xl_count                        
+	$7 = 13
+(gdb) p *((xlator_t *)graph->first)      
+$8 = {name = 0xb2e15da0 "meta-autoload", type = 0xb2e02cd0 "meta", instance_name = 0x0, next = 0xb2e151f8, prev = 0x0, parents = 0x0, children = 0xb2e17590, 
+  options = 0xb2e02c28, dlhandle = 0xb2e17268, fops = 0xb2d5f524 <fops>, cbks = 0xb2d5f500 <cbks>, dumpops = 0x0, volume_options = {next = 0xb2e175f8, 
+    prev = 0xb2e175f8}, fini = 0xb2d5256d <fini>, init = 0xb2d52521 <init>, reconfigure = 0x0, mem_acct_init = 0xb2d524d9 <mem_acct_init>, 
+  notify = 0xb6fb9069 <default_notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, count = 0} <repeats 55 times>}, 
+  history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, winds = 0, switched = 0 '\000', 
+  local_pool = 0x0, is_autoloaded = _gf_true, volfile_id = 0x0, xl_id = 13}
+ (gdb) p *((xlator_t *)graph->first)->next   （meta.c）
+$9 = {name = 0xb2e01478 "vg0", type = 0xb2e15df0 "debug/io-stats", instance_name = 0x0, next = 0xb2e140b0, prev = 0xb2e16778, parents = 0xb2e17650, 
+  children = 0xb2e16730, options = 0xb2e15cf8, dlhandle = 0xb2e15e88, fops = 0xb2d8511c <fops>, cbks = 0xb2d850f8 <cbks>, dumpops = 0xb2d852b4 <dumpops>, 
+  volume_options = {next = 0xb2e16248, prev = 0xb2e16248}, fini = 0xb2d7639d <fini>, init = 0xb2d75fa1 <init>, reconfigure = 0xb2d75ce1 <reconfigure>, 
+  mem_acct_init = 0xb2d75f11 <mem_acct_init>, notify = 0xb2d763e5 <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, 
+      count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, 
+  winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 12}  (io_stats.c)
+(gdb) p *((xlator_t *)graph->first)->next->next  
+$10 = {name = 0xb2e14bd0 "vg0-io-threads", type = 0xb2e14ca8 "performance/io-threads", instance_name = 0x0, next = 0xb2e12f68, prev = 0xb2e151f8, parents = 0xb2e16548, 
+  children = 0xb2e151b0, options = 0xb2e14c00, dlhandle = 0xb2e14d98, fops = 0xb2d94cec <fops>, cbks = 0xb2d94cc8 <cbks>, dumpops = 0xb2d94e84 <dumpops>, 
+  volume_options = {next = 0xb2e15168, prev = 0xb2e15168}, fini = 0xb2d8ad5d <fini>, init = 0xb2d8a9c5 <init>, reconfigure = 0xb2d8a90d <reconfigure>, 
+  mem_acct_init = 0xb2d8a8ad <mem_acct_init>, notify = 0xb2d8ad29 <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, 
+      count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, 
+  winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 11}
+(gdb) p *((xlator_t *)graph->first)->next->next->next    (io-threads.c)
+$11 = {name = 0xb2e13a88 "vg0-md-cache", type = 0xb2e13b60 "performance/md-cache", instance_name = 0x0, next = 0xb2e11e20, prev = 0xb2e140b0, parents = 0xb2e14d00, 
+  children = 0xb2e14068, options = 0xb2e13ab8, dlhandle = 0xb2e13c50, fops = 0xb2daaeb0 <fops>, cbks = 0xb2daae8c <cbks>, dumpops = 0xb2daae60 <dumpops>, 
+  volume_options = {next = 0xb2e14020, prev = 0xb2e14020}, fini = 0xb2da0429 <fini>, init = 0xb2d9ff45 <init>, reconfigure = 0xb2d9fd75 <reconfigure>, 
+  mem_acct_init = 0xb2d9ff3d <mem_acct_init>, notify = 0xb2da0249 <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, 
+      count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, 
+  winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 10}
+(gdb) p *((xlator_t *)graph->first)->next->next->next->next
+$12 = {name = 0xb2e12940 "vg0-open-behind", type = 0xb2e12a18 "performance/open-behind", instance_name = 0x0, next = 0xb2e10c28, prev = 0xb2e12f68, 
+  parents = 0xb2e13bb8, children = 0xb2e12f20, options = 0xb2e12970, dlhandle = 0xb2e12b08, fops = 0xb2dba6c8 <fops>, cbks = 0xb2dba6a4 <cbks>, 
+  dumpops = 0xb2dba678 <dumpops>, volume_options = {next = 0xb2e12ed8, prev = 0xb2e12ed8}, fini = 0xb2db0c61 <fini>, init = 0xb2db0b29 <init>, 
+  reconfigure = 0xb2db0ac9 <reconfigure>, mem_acct_init = 0xb2db0a71 <mem_acct_init>, notify = 0xb6fb9069 <default_notify>, loglevel = GF_LOG_NONE, latencies = {{
+      min = 0, max = 0, total = 0, std = 0, mean = 0, count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, 
+  init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 9}
+$13 = {name = 0xb2e11748 "vg0-quick-read", type = 0xb2e11820 "performance/quick-read", instance_name = 0x0, next = 0xb2e0fae0, prev = 0xb2e11e20, parents = 0xb2e12a70, 
+  children = 0xb2e11dd8, options = 0xb2e11778, dlhandle = 0xb2e11910, fops = 0xb2dc8798 <fops>, cbks = 0xb2dc8774 <cbks>, dumpops = 0xb2dc8748 <dumpops>, 
+  volume_options = {next = 0xb2e11d90, prev = 0xb2e11d90}, fini = 0xb2dbe815 <fini>, init = 0xb2dbe4d5 <init>, reconfigure = 0xb2dbdfb5 <reconfigure>, 
+  mem_acct_init = 0xb2dbdf55 <mem_acct_init>, notify = 0xb6fb9069 <default_notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, 
+      mean = 0, count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, 
+  mem_acct = 0x0, winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 8}
+(gdb) p *((xlator_t *)graph->first)->next->next->next->next->next->next
+$14 = {name = 0xb2e10600 "vg0-io-cache", type = 0xb2e106d8 "performance/io-cache", instance_name = 0x0, next = 0xb2e0e550, prev = 0xb2e10c28, parents = 0xb2e11878, 
+  children = 0xb2e10be0, options = 0xb2e10630, dlhandle = 0xb2e107c8, fops = 0xb2ddf940 <fops>, cbks = 0xb2ddf8f0 <cbks>, dumpops = 0xb2ddf914 <dumpops>, 
+  volume_options = {next = 0xb2e10b98, prev = 0xb2e10b98}, fini = 0xb2dd0e85 <fini>, init = 0xb2dd0555 <init>, reconfigure = 0xb2dd02d9 <reconfigure>, 
+  mem_acct_init = 0xb2dd0279 <mem_acct_init>, notify = 0xb6fb9069 <default_notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, 
+      mean = 0, count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, 
+  mem_acct = 0x0, winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 7}
+(gdb) p *((xlator_t *)graph->first)->next->next->next->next->next->next->next
+$15 = {name = 0xb2e0f070 "vg0-readdir-ahead", type = 0xb2e0f148 "performance/readdir-ahead", instance_name = 0x0, next = 0xb2e0d408, prev = 0xb2e0fae0, 
+  parents = 0xb2e10730, children = 0xb2e0fa98, options = 0xb2e0f0a0, dlhandle = 0xb2e0f248, fops = 0xb2dec72c <fops>, cbks = 0xb2dec708 <cbks>, dumpops = 0x0, 
+  volume_options = {next = 0xb2e0f628, prev = 0xb2e0f628}, fini = 0xb2de2d29 <fini>, init = 0xb2de2b45 <init>, reconfigure = 0xb2de2ac9 <reconfigure>, 
+  mem_acct_init = 0xb2de2a69 <mem_acct_init>, notify = 0xb6fb9069 <default_notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, 
+      mean = 0, count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, 
+  mem_acct = 0x0, winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 6}
+(gdb) p *((xlator_t *)graph->first)->next->next->next->next->next->next->next->next
+$16 = {name = 0xb2e0df28 "vg0-read-ahead", type = 0xb2e0e000 "performance/read-ahead", instance_name = 0x0, next = 0xb2e0c2c0, prev = 0xb2e0e550, parents = 0xb2e0f1e0, 
+  children = 0xb2e0e508, options = 0xb2e0df58, dlhandle = 0xb2e0e0f0, fops = 0xb2dff658 <fops>, cbks = 0xb2dff634 <cbks>, dumpops = 0xb2dff608 <dumpops>, 
+  volume_options = {next = 0xb2e0e4c0, prev = 0xb2e0e4c0}, fini = 0xb2df36a9 <fini>, init = 0xb2df347d <init>, reconfigure = 0xb2df3371 <reconfigure>, 
+  mem_acct_init = 0xb2df3311 <mem_acct_init>, notify = 0xb6fb9069 <default_notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, 
+      mean = 0, count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, 
+  mem_acct = 0x0, winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 5}
+(gdb) p *((xlator_t *)graph->first)->next->next->next->next->next->next->next->next->next
+$17 = {name = 0xb2e0cde0 "vg0-write-behind", type = 0xb2e0ceb8 "performance/write-behind", instance_name = 0x0, next = 0xb2e0b020, prev = 0xb2e0d408, 
+  parents = 0xb2e0e058, children = 0xb2e0d3c0, options = 0xb2e0ce10, dlhandle = 0xb2e0cfa8, fops = 0xb2f14aa8 <fops>, cbks = 0xb2f14a84 <cbks>, 
+  dumpops = 0xb2f14a58 <dumpops>, volume_options = {next = 0xb2e0d378, prev = 0xb2e0d378}, fini = 0xb2f09ff1 <fini>, init = 0xb2f09d6d <init>, 
+  reconfigure = 0xb2f09cb9 <reconfigure>, mem_acct_init = 0xb2f09c59 <mem_acct_init>, notify = 0xb6fb9069 <default_notify>, loglevel = GF_LOG_NONE, latencies = {{
+      min = 0, max = 0, total = 0, std = 0, mean = 0, count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, 
+  init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 4}
+ $18 = {name = 0xb2e09ba8 "vg0-dht", type = 0xb2e0bbc8 "cluster/distribute", instance_name = 0x0, next = 0xb2e08fb0, prev = 0xb2e0c2c0, parents = 0xb2e0cf10, 
+  children = 0xb2e0c1e8, options = 0xb2e0bb20, dlhandle = 0xb2e0bcb0, fops = 0xb2f857a0 <fops>, cbks = 0xb2f85750 <cbks>, dumpops = 0xb2f85774 <dumpops>, 
+  volume_options = {next = 0xb2e0c080, prev = 0xb2e0c080}, fini = 0xb2f6ad81 <dht_fini>, init = 0xb2f6b8a1 <dht_init>, reconfigure = 0xb2f6b401 <dht_reconfigure>, 
+  mem_acct_init = 0xb2f6ae39 <mem_acct_init>, notify = 0xb2f54ce9 <dht_notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, 
+      count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, 
+  winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 3}
+ $6 = {name = 0xb2e14770 "vg1-disperse-1", type = 0xb2e15a78 "cluster/disperse", instance_name = 0x0, next = 0xb2e13b78, prev = 0xb2e15e48, parents = 0xb2e17058, 
+  children = 0xb2e15ce0, options = 0xb2e159d0, dlhandle = 0xb2e147f8, fops = 0xb2f71598 <fops>, cbks = 0xb2f71574 <cbks>, dumpops = 0xb2f71548 <dumpops>, 
+  volume_options = {next = 0xb2e15b40, prev = 0xb2e15b40}, fini = 0xb2f22b61 <fini>, init = 0xb2f2262d <init>, reconfigure = 0xb2f21f6d <reconfigure>, 
+  mem_acct_init = 0xb2f21ee9 <mem_acct_init>, notify = 0xb2f2260d <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, 
+      count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e034f8, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, 
+  winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 8}
+(gdb) p *((xlator_t *)graph->first)->next->next->next->next->next->next->next->next->next->next->next->next
+$7 = {name = 0xb2e12700 "vg1-disperse-0", type = 0xb2e14720 "cluster/disperse", instance_name = 0x0, next = 0xb2e11b08, prev = 0xb2e14ed0, parents = 0xb2e16fc8, 
+  children = 0xb2e14d68, options = 0xb2e14678, dlhandle = 0xb2e147f8, fops = 0xb2f71598 <fops>, cbks = 0xb2f71574 <cbks>, dumpops = 0xb2f71548 <dumpops>, 
+  volume_options = {next = 0xb2e14bc8, prev = 0xb2e14bc8}, fini = 0xb2f22b61 <fini>, init = 0xb2f2262d <init>, reconfigure = 0xb2f21f6d <reconfigure>, 
+  mem_acct_init = 0xb2f21ee9 <mem_acct_init>, notify = 0xb2f2260d <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, 
+      count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e034f8, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, 
+  winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 7}
+ 
+(gdb) p *((xlator_t *)graph->first)->next->next->next->next->next->next->next->next->next->next->next
+$19 = {name = 0xb2e07930 "vg0-client-1", type = 0xb2e09b58 "protocol/client", instance_name = 0x0, next = 0xb2e06dc0, prev = 0xb2e0b020, parents = 0xb2e0c230, 
+  children = 0x0, options = 0xb2e09ab0, dlhandle = 0xb2e07978, fops = 0xb2fc993c <fops>, cbks = 0xb2fc9ad4 <cbks>, dumpops = 0xb2fc9910 <dumpops>, volume_options = {
+    next = 0xb2e09c20, prev = 0xb2e09c20}, fini = 0xb2f924d9 <fini>, init = 0xb2f922ed <init>, reconfigure = 0xb2f92199 <reconfigure>, 
+  mem_acct_init = 0xb2f91469 <mem_acct_init>, notify = 0xb2f91111 <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, 
+      count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, 
+  winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 2}
+(gdb) p *((xlator_t *)graph->first)->next->next->next->next->next->next->next->next->next->next->next->next
+$20 = {name = 0xb2e01140 "vg0-client-0", type = 0xb2e078e0 "protocol/client", instance_name = 0x0, next = 0x0, prev = 0xb2e08fb0, parents = 0xb2e0c1a0, children = 0x0, 
+  options = 0xb2e01010, dlhandle = 0xb2e07978, fops = 0xb2fc993c <fops>, cbks = 0xb2fc9ad4 <cbks>, dumpops = 0xb2fc9910 <dumpops>, volume_options = {next = 0xb2e07d48, 
+    prev = 0xb2e07d48}, fini = 0xb2f924d9 <fini>, init = 0xb2f922ed <init>, reconfigure = 0xb2f92199 <reconfigure>, mem_acct_init = 0xb2f91469 <mem_acct_init>, 
+  notify = 0xb2f91111 <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, count = 0} <repeats 55 times>}, history = 0x0, 
+  ctx = 0x21008, graph = 0xb2e02b60, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, winds = 0, switched = 0 '\000', local_pool = 0x0, 
+  is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 1}
+ 
+ 其中:ctx->master是client端libglusterclient的一个数据结构
+ (gdb) p *(xlator_t *)ctx->master
+$26 = {name = 0x44488 "fuse", type = 0x444d0 "mount/fuse", instance_name = 0x0, next = 0x0, prev = 0x0, parents = 0x0, children = 0x0, options = 0x449a0, 
+  dlhandle = 0x445a0, fops = 0xb605941c <fops>, cbks = 0xb6059324 <cbks>, dumpops = 0xb60592f8 <dumpops>, volume_options = {next = 0x44978, prev = 0x44978}, 
+  fini = 0xb6048489 <fini>, init = 0xb60477dd <init>, reconfigure = 0x0, mem_acct_init = 0xb6047791 <mem_acct_init>, notify = 0xb6048545 <notify>, 
+  loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0x0, 
+  itable = 0x0, init_succeeded = 1 '\001', private = 0x46e68, mem_acct = 0x44f50, winds = 0, switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, 
+  volfile_id = 0x0, xl_id = 0}
+(gdb) p ((xlator_t *)ctx->master)->notify
+$28 = (event_notify_fn_t) 0xb6048545 <notify>
+ 
+(io的流程按照上面的顺序处理，开始是fuse-meta-...-dht-cluster)
+ 
+ 7. fuse层
+	在fuse_bridge.c
+	7.1 第一次 event= GF_EVENT_GRAPH_NEW
+	notify() --->xlator_notify()---> glusterfs_graph_activate
+	在glusterfs_graph_active中可以看到graph的xlator层有13个
+	(gdb) p *graph
+	$10 = {list = {next = 0x21158, prev = 0x21158}, graph_uuid = "node01-9477-2018-10-15-07:42:39:409615", '\000' <repeats 89 times>, dob = {tv_sec = 1539589359, 
+    tv_usec = 409612}, first = 0xb2e16778, top = 0xb2e16778, leaf_count = 2, xl_count = 13, id = 0, used = 0, volfile_checksum = 0}
+	从流程看是client与集群节点连接之后，收到的反馈消息，按照此消息（包含了卷参数）来设置相应的xlator层
+	7.2 第二次 event= GF_EVENT_CHILD_UP   notify():
+		7.2.1 fuse_graph_setup (this, graph)
+			7.2.1.1 inode_table_t *new
+			7.2.1.2 初始化new
+			7.2.1.3 __inode_table_init_root (new)
+				1.inode_t     *root = NULL;
+				  struct iatt  iatt = {0, }; //元数据
+				2. __inode_create (table)
+					2.1 inode_t  *newi = NULL
+						list_add (&newi->list, &table->lru)
+						table->lru_size++
+					2.2 __inode_link (root, NULL, NULL, &iatt)
+		7.2.2 ret = gf_thread_create (&private->fuse_thread, NULL,fuse_thread_proc, this)
+			fuse_thread_proc (xlator_t *data)
+			1.for(;;)
+				1.1 fuse_graph_sync (this)		
+				1.2 sys_readv (priv->fd, iov_in, 2) 客户端程序最终停在此来等待fuse设备有新数据可以读写
+				1.3 finh = (fuse_in_header_t *)iov_in[0].iov_base; 
+					iov_in[0]中有请求的操作类型，将其转换为fuse_in_header_t
+				1.4 fuse_graph_sync (this)
+
+				1. if (res > iov_in[0].iov_len),
+					1.5.1则拼接两段数据
+					//如果第一个ivoec也是数据，则iov_in[0].iov_len只是它自己的数据长度
+					1.5.2 msg = finh + 1
+					总结：fini =iov[0].base, msg=iov[1].base 当第一个iov中存了操作类型时，将两者传给fuse_ops[]
+					区别：当两个都为数据时，将两段地址拼接 然后将两者传给fuse_ops
+				1.6 fuse_ops[finh->opcode] (this, finh, msg); 调用注册的文件操作函数处理数据流程 （touch aaa.txt)
+					《任意接口最后都会调用到下层的lookup即 meta_lookop()》
+					1.6.1 fuse_getattr
+						1.6.1.1 若为根目录则
+						调用xl->fops->fop 即 fops->lookup
+						meta_lookup (call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *xdata)
+						实际meta_lookup并没有具体实现，它是调用了default_lookup，看default_lookup的实现它是继续掉下层的lookup
+						default_lookup (call_frame_t *frame,xlator_t *this,loc_t * loc,dict_t * xdata)
+						{
+							STACK_WIND_TAIL (frame,FIRST_CHILD(this), FIRST_CHILD(this)->fops->lookup,loc, xdata);
+							return 0;
+						}
+						FIRST_CHILD(this)=this->children->xlator
+						1.6.1.2 若为普通目录
+							1.6.1.2.1 fuse_resolve_inode_init (state, &state->resolve, state->finh->nodeid) //初始化state的参数
+								1. inode = (inode_t *) (unsigned long) finh->nodeid
+								2. gf_uuid_copy (resolve->gfid, inode->gfid)
+								3. resolve->hint = inode
+							1.6.1.2.2 fuse_resolve_and_resume (state, fuse_getattr_resume)
+								 state->resume_fn = fuse_getattr_resume
+								 fuse_resolve_all (state)
+									1. fuse_resolve_done (state)
+										fuse_getattr_resume（state）
+										1.1 FUSE_FOP (state, fuse_attr_cbk, GF_FOP_STAT,stat, &state->loc, state->xdata)
+										(gdb) p state->loc
+											$55 = {path = 0x43668 "/hdir", name = 0x0, inode = 0xb2e9f070, parent = 0x0, gfid = "\246\274\062\030\303\363Fi\250MJ\234\332\250\301G", 
+											pargfid = '\000' <repeats 15 times>}
+										调用下层的stat接口即meta_stat,忽略中间的功能模块到dht_stat()
+								
+					1.6.2 fuse_lookup
+						1.6.2.1 fuse_resolve_and_resume (state, fuse_getattr_resume)
+							1.6.2.1.1 state->resume_fn = fn
+							1.6.2.1.2 fuse_resolve_all (fuse_state_t *state)
+								1. state->resolve_now = &state->resolve;
+								2. state->loc_now     = &state->loc;
+								3. fuse_resolve (state)
+									3.1 fuse_resolve_parent (state)
+										3.1.1 ret = fuse_resolve_parent_simple (state)
+										3.1.2 fuse_resolve_entry (state)	
+										3.1.3 meta_lookop()
+										
+							
+					1.6.3 fuse_create
+						1.6.3.1 最终调用了fuse_create_resume(state)
+						FUSE_FOP (state, fuse_create_cbk, GF_FOP_CREATE,create, &state->loc, state->flags, state->mode,state->umask, fd, state->xdata) 调用下层xlator
+					1.6.4 fuse_flush()
+					1.6.5 fuse_setattr
+					1.6.6 fuse_flush()
+					1.6.7 fuse_release()
+					1.6.x fuse_write()
+						1.6.1 fuse_resolve_and_resume (state, fuse_write_resume)
+							1.6.1.1 fuse_gfid_set (state)设置gfid
+							1.6.1.2 state->resume_fn = fn = fuse_write_resume
+							1.6.1.3 fuse_resolve_all (state)
+								1.6.1.3.1 ****************第一此为NULL，则
+									(gdb) p state->resolve  只有fd = 0xb19244a0, 有值
+								state->resolve_now = &state->resolve;
+								state->loc_now     = &state->loc
+								fuse_resolve (state)
+									1. fuse_resolve_fd (state) 【前面给resolve_now赋值之后fd有值】
+										1.1 //active_subvol = activefd->inode->table->xl;【下层的xlator】
+										1.2 fuse_resolve_continue (state)
+											1.2.1 fuse_resolve_loc_touchup (state) //第一次loc_now值全为0， resolve_now只有fd有值
+											1.2.2 fuse_resolve_all (state) *******************第二次，resolve2与loc2全为0
+												1.2.2.1 state->resolve_now = &state->resolve2; 
+														state->loc_now     = &state->loc2
+														fuse_resolve (state)
+													1.2.2.1.1 fuse_resolve_all (state) （因为全为0，前面选项都不满足，走最后一个分支）************第三次
+														fuse_resolve_done (state)
+														1.fuse_fop_resume (state)
+															1.1 fuse_write_resume(state)
+															FUSE_FOP (state, fuse_writev_cbk, GF_FOP_WRITE, writev, state->fd,&state->vector, 1, state->off, state->io_flags, iobref,state->xdata) //此处调用了下层的writev函数，到此fuse层的写就全部完成了（接下来就是调用meta_writev）
+																1.1.1 ETA_FOP (fd->inode, writev, frame, this, fd, iov, count, offset, flags,iobref, xdata)
+																	1.1.1.1 _fops = meta_fops_get (i, t)
+																		return default_fops ；这个default默认是直接调用下层xlator对应的操作接口
+					
+
+8. meta层
+...
+
+
+9. dht层
+***fuse = FUSE_GETATTR
+dht_stat(call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *xdata)
+	frame->wind_from = 0xb2f0f708 <__FUNCTION__.18058> "mdc_stat"
+	frame->wind_to = 0xb2f10110 "FIRST_CHILD(this)->fops->stat"
+	p *loc
+	$63 = {path = 0x43668 "/hdir", name = 0x0, inode = 0xb2e9f070, parent = 0x0, gfid = "\246\274\062\030\303\363Fi\250MJ\234\332\250\301G", pargfid = '\000' <repeats 15 times>}
+	9.1 local = dht_local_init (frame, loc, NULL, GF_FOP_STAT)
+		9.1.1 dht_local_t *local
+			  loc_copy (&local->loc, loc)
+			  local->op_ret   = -1;
+			  local->op_errno = EUCLEAN;//0
+			  local->fop      = fop;  //GF_FOP_STAT
+			  local->layout   = dht_layout_get (frame->this, inode);
+              local->cached_subvol = dht_subvol_get_cached (frame->this,inode) //下层 disperse-0
+			  frame->local = local
+			  (gdb) p *local->layout
+					$64 = {spread_cnt = 0, cnt = 2, preset = 0, commit_hash = 1, gen = 3, type = 0, ref = 2, search_unhashed = _gf_false, list = 0xb2e28768}
+	9.2 local->call_cnt = call_cnt = layout->cnt
+		for(i<call_cnt)
+			subvol = layout->list[i].xlator
+			STACK_WIND_COOKIE (frame, dht_attr_cbk, subvol, subvol,subvol->fops->stat, loc, xdata)
+			subvol->fops->stat = ec_gf_stat() 即ec_stat(frame, this, -1, EC_MINIMUM_MIN, default_stat_cbk, NULL, loc,xdata)
+			
+	
+dht_lookup (call_frame_t *frame, xlator_t *this,loc_t *loc, dict_t *xattr_req)
+	9.1 dht_local_init (frame, loc, NULL, GF_FOP_LOOKUP)
+	9.2 dht_filter_loc_subvol_key (this, loc, &new_loc,&hashed_subvol) //hashed_subvol为空
+	9.3 hashed_subvol = dht_subvol_get_hashed (this, loc)
+		9.3.1 layout = dht_layout_get (this, loc->parent)
+			9.3.1.1 dht_inode_ctx_layout_get (inode, this, &layout)
+			(gdb) p layout->list[0]
+					$17 = {err = 0, start = 0, stop = 2147483646, commit_hash = 1, xlator = 0xb2e06e10}
+			(gdb) p layout->list[1]
+					$18 = {err = 0, start = 2147483647, stop = 4294967295, commit_hash = 1, xlator = 0xb2e09000}
+		9.3.2 subvol = methods->layout_search (this, layout, loc->name) //dht_layout_search()			
+	9.4  if (IA_ISDIR (local->inode->ia_type))
+		9.4.1 调用下层lookup
+		9.4.2 return 0
+dht_writev()
+	9.1 local = dht_local_init (frame, NULL, fd, GF_FOP_WRITE)
+	9.2 //下层xlator :subvol = local->cached_subvol;
+	9.3  STACK_WIND_COOKIE (frame, dht_writev_cbk, subvol, subvol,
+                           subvol->fops->writev, fd,
+                           local->rebalance.vector,
+                           local->rebalance.count,
+                           local->rebalance.offset,
+                           local->rebalance.flags,
+                           local->rebalance.iobref, local->xattr_req)
+	调用下层的writev ： ec_gf_writev()
+	
+***fuse = FUSE_LOOKUP
+dht_lookup (call_frame_t *frame, xlator_t *this,loc_t *loc, dict_t *xattr_req)
+	9.1 local = dht_local_init (frame, loc, NULL, GF_FOP_LOOKUP)
+	9.2 dht_filter_loc_subvol_key (this, loc, &new_loc,&hashed_subvol)
+	9.3 hashed_subvol = dht_subvol_get_hashed (this, loc)
+		(gdb) p *this
+			$1 = {name = 0xb2e09bf8 "vg0-dht", type = 0xb2e0bc18 "cluster/distribute", instance_name = 0x0, next = 0xb2e09000, prev = 0xb2e0c310, parents = 0xb2e0cf60, 
+			  children = 0xb2e0c238, options = 0xb2e0bb70, dlhandle = 0xb2e0bd00, fops = 0xb2f857a0 <fops>, cbks = 0xb2f85750 <cbks>, dumpops = 0xb2f85774 <dumpops>, 
+			  volume_options = {next = 0xb2e0c0d0, prev = 0xb2e0c0d0}, fini = 0xb2f6ad81 <dht_fini>, init = 0xb2f6b8a1 <dht_init>, reconfigure = 0xb2f6b401 <dht_reconfigure>, 
+			  mem_acct_init = 0xb2f6ae39 <mem_acct_init>, notify = 0xb2f54ce9 <dht_notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, 
+				  count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x21008, graph = 0xb2e02bb0, itable = 0x0, init_succeeded = 1 '\001', private = 0xb2e31838, 
+			  mem_acct = 0xb2e2f620, winds = 0, switched = 0 '\000', local_pool = 0xb6fd44cc <pools+100>, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 3}
+		(gdb) p *loc
+			$2 = {path = 0x43918 "/", name = 0x43919 "", inode = 0xb1922d70, parent = 0x0, gfid = '\000' <repeats 15 times>, "\001", pargfid = '\000' <repeats 15 times>}
+		(gdb) p *(dht_conf_t *)this->private
+			$4 = {subvolume_lock = {spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, __nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, 
+				  __size = '\000' <repeats 23 times>, __align = 0}}, subvolume_cnt = 2, subvolumes = 0xb2e31a58, subvolume_status = 0xb2e31aa0 "\001\001\r\360\255\272", 
+			  last_event = 0xb2e31ae0, file_layouts = 0xb2e32370, dir_layouts = 0x0, search_unhashed = 1, lookup_optimize = _gf_false, gen = 3, du_stats = 0xb2e31b70, 
+			  min_free_disk = 10, min_free_inodes = 5, disk_unit = 112 'p', refresh_interval = 0, unhashed_sticky_bit = _gf_false, last_stat_fetch = {tv_sec = 0, tv_usec = 0}, 
+			  layout_lock = {spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, __nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, 
+				  __size = '\000' <repeats 23 times>, __align = 0}}, leaf_to_subvol = 0xb2e32118, private = 0x0, use_readdirp = _gf_true, vol_uuid = '\000' <repeats 36 times>, 
+			  assert_no_child_down = _gf_false, subvol_up_time = 0xb2e31b28, dir_spread_cnt = 0, decommissioned_bricks = 0xb2e31c10, decommission_in_progress = 0, 
+			  decommission_subvols_cnt = 0, defrag = 0x0, readdir_optimize = _gf_false, rsync_regex = {buffer = 0xb2e31d30 "\300\035\343\262\020", allocated = 140, used = 140, 
+				syntax = 242428, fastmap = 0xb2e31c28 "", translate = 0x0, re_nsub = 1, can_be_null = 0, regs_allocated = 0, fastmap_accurate = 1, no_sub = 0, not_bol = 0, 
+				not_eol = 0, newline_anchor = 0}, rsync_regex_valid = _gf_true, extra_regex = {buffer = 0x0, allocated = 0, used = 0, syntax = 0, fastmap = 0x0, translate = 0x0, 
+				re_nsub = 0, can_be_null = 0, regs_allocated = 0, fastmap_accurate = 0, no_sub = 0, not_bol = 0, not_eol = 0, newline_anchor = 0}, extra_regex_valid = _gf_false, 
+			  xattr_name = 0xb2f78b68 "trusted.glusterfs.dht", link_xattr_name = 0xb2e32020 "trusted.glusterfs.dht.linkto", 
+			  commithash_xattr_name = 0xb2e32080 "trusted.glusterfs.dht.commithash", wild_xattr_name = 0xb2e320e0 "trusted.glusterfs.dht*", do_weighting = _gf_true, 
+			  randomize_by_gfid = _gf_false, dthrottle = 0, methods = {migration_get_dst_subvol = 0xb2f571f9 <dht_migration_get_dst_subvol>, migration_other = 0x0, 
+				migration_needed = 0xb2f5721d <dht_migration_needed>, layout_search = 0xb2f18ead <dht_layout_search>}, lock_pool = 0xb6fd44b8 <pools+80>, local_subvols = 0x0, 
+			  local_nodeuuids = 0x0, local_subvols_cnt = 0, vol_commit_hash = 0, vch_forced = _gf_false, lock_migration_enabled = _gf_false, lock = {spinlock = 0, mutex = {
+				  __data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, __nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, __size = '\000' <repeats 23 times>, 
+				  __align = 0}}, link_lock = {guard = {__data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, __nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, 
+				  __size = '\000' <repeats 23 times>, __align = 0}, cond = {__data = {__lock = 0, __futex = 0, __total_seq = 0, __wakeup_seq = 0, __woken_seq = 0, __mutex = 0x0, 
+					__nwaiters = 0, __broadcast_seq = 0}, __size = '\000' <repeats 47 times>, __align = 0}, waitq = {next = 0xb2e319f8, prev = 0xb2e319f8}, lock = 0, 
+				attr = SYNC_LOCK_DEFAULT, owner = 0x0, owner_tid = 0, type = LOCK_NULL}}
+		9.3.1第二次进入layout = dht_layout_get (this, loc->parent)
+			(gdb) p *loc->parent
+				$20 = {table = 0xb1907560, gfid = '\000' <repeats 15 times>, "\001", lock = {spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, 
+						__nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, __size = '\000' <repeats 23 times>, __align = 0}}, nlookup = 0, fd_count = 0, ref = 1, 
+				  ia_type = IA_IFDIR, fd_list = {next = 0xb1922db4, prev = 0xb1922db4}, dentry_list = {next = 0xb1922dbc, prev = 0xb1922dbc}, hash = {next = 0xb1c04040, 
+					prev = 0xb1c04040}, list = {next = 0xb1907594, prev = 0xb2e013ec}, _ctx = 0xb1922e18}
+			(gdb) p inode->_ctx[3]
+				$25 = {{key = 3001069680, xl_key = 0xb2e0b070}, {value1 = 18446744072393617224, ptr1 = 0xb1906f48}, {value2 = 0, ptr2 = 0x0}, ref = 0}
+			9.3.1.1 dht_inode_ctx_layout_get (inode, this, &layout)
+				9.3.1.1.1 dht_inode_ctx_get (inode, this, &ctx)
+						*layout = ctx->layout
+		9.3.2 dht_layout_search(this, layout, loc->name)
+			gdb) p *layout
+				$33 = {spread_cnt = 0, cnt = 2, preset = 0, commit_hash = 1, gen = 3, type = 0, ref = 2, search_unhashed = _gf_false, list = 0xb2e021d8}
+			9.3.2.1 dht_hash_compute (this, layout->type, name, &hash) //得到hash是文件名的hash值
+			//只有两个brick的分布式卷
+			(gdb) p layout->list[0]
+				$3 = {err = 0, start = 0, stop = 2147483646, commit_hash = 1, xlator = 0xb2e06e10}
+			(gdb) p layout->list[1]
+				$4 = {err = 0, start = 2147483647, stop = 4294967295, commit_hash = 1, xlator = 0xb2e09000}		
+	9.4 不走if (IA_ISDIR (local->inode->ia_type))流程
+	9.5 do_fresh_lookup:
+		dict_set_uint32 (local->xattr_req,conf->xattr_name, 4 * 4)
+	9.6 dht_check_and_set_acl_xattr_req (loc->inode, local->xattr_req);
+	9.7 STACK_WIND_COOKIE (frame, dht_lookup_cbk, hashed_subvol,hashed_subvol, hashed_subvol->fops->lookup,loc, local->xattr_req)
+***fuse= FUSE_CREATE
+dht_lookup (call_frame_t *frame, xlator_t *this,loc_t *loc, dict_t *xattr_req)
+		9.1 do_fresh_lookup:
+(只有这三次)
+10. ec层
+ec_stat(frame, this, -1, EC_MINIMUM_MIN, default_stat_cbk, NULL, loc,xdata)
+	10.1 fop = ec_fop_data_allocate(frame, this, GF_FOP_STAT, EC_FLAG_LOCK_SHARED,target, minimum, ec_wind_stat, ec_manager_stat,callback, data)
+		fop->wind = ec_wind_stat()
+		fop->handler = ec_manager_stat()
+	10.2 ec_manager(fop, error)
+		10.2.1 int32_t ec_manager_stat(ec_fop_data_t * fop, int32_t state)
+			fop->state = EC_STATE_INIT
+			10.2.1 fop->state = fop->handler(fop, fop->state)
+				10.2.1.1 ctx = __ec_inode_get(loc->inode, fop->xl)
+				10.2.1.2 lock = ec_lock_allocate(fop, loc)
+				10.2.1.3 lock->flock.l_type = F_WRLCK;
+						 lock->flock.l_whence = SEEK_SET
+				10.2.1.4 ec_lock_insert(fop, lock, flags, base)
+		10.2.2 ec_lock(fop)
+			10.2.2.1 ec_resume(fop, 0)
+		10.2.3 return EC_STATE_DISPATCH
+			
+			
+ec_lookup(call_frame_t * frame, xlator_t * this, uintptr_t target,int32_t minimum, fop_lookup_cbk_t func, void * data,loc_t * loc, dict_t * xdata)
+	10.1 ec_fop_data_allocate(frame, this, GF_FOP_LOOKUP, EC_FLAG_LOCK_SHARED,
+                               target, minimum, ec_wind_lookup,
+                               ec_manager_lookup, callback, data)
+	10.2 ec_manager(fop, error)
+		10.2.1 fop->state = fop->handler(fop, fop->state) //ec_manager_lookup ,state=EC_STATE_INIT
+			10.2.1.1 dict_set_uint64(fop->xdata, EC_XATTR_SIZE, 0)
+				dict_set_uint64(fop->xdata, EC_XATTR_VERSION, 0)
+				dict_set_uint64(fop->xdata, EC_XATTR_DIRTY, 0)
+			10.2.1.2 ec_dispatch_all(fop)
+			10.2.1.3 return EC_STATE_PREPARE_ANSWER
+	while(error >=0)再走一遍ec_manager() 此时fop->state =EC_STATE_PREPARE_ANSWER
+			10.2.1.1 return EC_STATE_REPORT
+	while(error >=0)再走一遍ec_manager() 此时fop->state =EC_STATE_REPORT
+			10.2.1.1 fop->cbks.lookup(fop->req_frame, fop, fop->xl, -1, fop->error,NULL, NULL, NULL, NULL) //default_lookup_cbk
+			10.2.1.2 return EC_STATE_END
+	while(error >=0)再走一遍ec_manager()
+			ec_fop_data_release(fop)
+			break
+		
+			
+11 .client层
+client_stat (call_frame_t *frame, xlator_t *this, loc_t *loc, dict_t *xdata)
+	11.1 conf = this->private;
+		 args.loc = loc;
+		 args.xdata = xdata
+	11.2 ret = proc->fn (frame, this, &args); //client3_3_stat
+		11.2.1 client_pre_stat (this, &req, args->loc, args->xdata)
+		11.2.2 client_submit_request (this, &req, frame, conf->fops,
+                                     GFS3_OP_STAT, client3_3_stat_cbk, NULL,
+                                     NULL, 0, NULL, 0, NULL,
+                                     (xdrproc_t)xdr_gfs3_stat_req)	
+		 
+client_lookup(call_frame_t *frame, xlator_t *this, loc_t *loc,dict_t *xdata)
+	(gdb) p *frame
+		$13 = {root = 0x72e48, parent = 0xb1b02318, frames = {next = 0xb1b02320, prev = 0x73508}, local = 0x0, this = 0xb2e06e10, ret = 0xb2f5546d <dht_lookup_cbk>, 
+		  ref_count = 0, lock = {spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, __nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, 
+			  __size = '\000' <repeats 23 times>, __align = 0}}, cookie = 0xb2e06e10, complete = _gf_false, op = GF_FOP_NULL, begin = {tv_sec = 0, tv_usec = 0}, end = {
+			tv_sec = 0, tv_usec = 0}, wind_from = 0xb2f744a0 <__FUNCTION__.21694> "dht_lookup", wind_to = 0xb2f76cc4 "hashed_subvol->fops->lookup", unwind_from = 0x0, 
+		  unwind_to = 0xb2f76ce0 "dht_lookup_cbk"}
+	(gdb) p *this
+		$14 = {name = 0xb2e01140 "vg0-client-0", type = 0xb2e07930 "protocol/client", instance_name = 0x0, next = 0x0, prev = 0xb2e09000, parents = 0xb2e0c1f0, children = 0x0, 
+		  options = 0xb2e01010, dlhandle = 0xb2e079c8, fops = 0xb2fc993c <fops>, cbks = 0xb2fc9ad4 <cbks>, dumpops = 0xb2fc9910 <dumpops>, volume_options = {next = 0xb2e07d98, 
+			prev = 0xb2e37ce8}, fini = 0xb2f924d9 <fini>, init = 0xb2f922ed <init>, reconfigure = 0xb2f92199 <reconfigure>, mem_acct_init = 0xb2f91469 <mem_acct_init>, 
+		  notify = 0xb2f91111 <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, count = 0} <repeats 55 times>}, history = 0x0, 
+		  ctx = 0x21008, graph = 0xb2e02bb0, itable = 0x0, init_succeeded = 1 '\001', private = 0xb2e37540, mem_acct = 0xb2e35658, winds = 0, switched = 0 '\000', 
+		  local_pool = 0xb6fd44b8 <pools+80>, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 1}
+	(gdb) p *loc
+		$15 = {path = 0x43670 "/htt", name = 0x43671 "htt", inode = 0x43520, parent = 0xb2e573c0, gfid = '\000' <repeats 15 times>, pargfid = '\000' <repeats 15 times>, "\001"}
+	(gdb) p *xdata
+		$16 = {is_static = 0 '\000', hash_size = 1, count = 7, refcount = 2, members = 0xb1b00830, members_list = 0xb1b035c0, extra_free = 0x0, extra_stdfree = 0x0, lock = {
+			spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, __nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, 
+			  __size = '\000' <repeats 23 times>, __align = 0}}, members_internal = 0xb1b035c0, free_pair = {hash_next = 0x0, prev = 0xb1b008d0, next = 0x0, value = 0xb1b00730, 
+			key = 0xb1b00e10 "user.swift.metadata"}, free_pair_in_use = _gf_true}
+	11.1 args.loc = loc;
+         args.xdata = xdata
+	11.2 proc = &conf->fops->proctable[GF_FOP_LOOKUP]
+	11.3 client3_3_lookup(frame, this, &args)
+		11.3.1 client_pre_lookup (this, &req, args->loc, args->xdata)
+		11.3.2 client_submit_request (this, &req, frame, conf->fops,
+                                     GFS3_OP_LOOKUP, client3_3_lookup_cbk,
+                                     NULL, rsphdr, count,
+                                     NULL, 0, local->iobref,
+                                     (xdrproc_t)xdr_gfs3_lookup_req)
+
+	
+	
+	
+
+				
+
+
+					
+ =======================================================================================================================================================================
+1.touch一个新文件
+FUSE_GETATTR
+FUSE_LOOKUP
+FUSE_CREATE
+FUSE_FLUSH
+FUSE_SETATTR
+FUSE_FLUSH
+FUSE_RELEASE
+2.touch一个重复文件
+FUSE_GETATTR
+FUSE_LOOKUP
+FUSE_OPEN
+FUSE_FLUSH
+FUSE_SETATTR
+FUSE_FLUSH
+FUSE_RELEASE
+3.删除一个空文件
+FUSE_GETATTR
+FUSE_LOOKUP
+FUSE_GETATTR
+FUSE_LOOKUP
+FUSE_GETATTR
+FUSE_UNLINK
+FUSE_FORGET
+4.创建一个文件夹
+FUSE_GETATTR
+FUSE_LOOKUP
+FUSE_GETATTR
+FUSE_MKDIR
+5.拷贝一个大文件(使用dd新建一个大文件时只lookup一次)，
+拷贝时是否去找源文件了？不是（拷贝一个不存在的文件，在第一步getattr后就退出了，说明在获取文件属性的时候内核已经去检查源文件了）
+FUSE_GETATTR
+FUSE_LOOKUP
+FUSE_GETATTR
+FUSE_LOOKUP
+FUSE_CREATE
+---开始写数据（开始写数据之后就不会进入meta层了）
+FUSE_GETXATTR
+FUSE_WRITE
+FUSE_GETXATTR
+FUSE_WRITE
+...
+FUSE_FLUSH
+FUSE_RELEASE
+6.dd一个大文件
+FUSE_GETATTR
+FUSE_LOOKUP
+FUSE_CREATE
+FUSE_FLUSH
+FUSE_GETXATTR
+---重复write操作
+FUSE_WRITE
+FUSE_WRITE
+...
+FUSE_FLUSH
+FUSE_RELEASE
+ 
+ 
+ 
+ =========================================================================================================================================================================
+gdb glusterfs
+handle SIGILL　nostop
+b main
+挂载部分是用子进程去挂载的 完后就释放了
+b 2514 守护进程
+b graph.c:665(可以看到graph的子集)p *((xlator_t *)graph->first)->next->next
+b fuse-bridge.c:4966(进程读fuse设备的readv位置，可以很好的检测io请求流程)
+r --volfile-id=vg0 --volfile-server=node01  /mnt
+程序走到2514时设置Set follow-fork-mode child 
+程序过了此断点后 设置Set follow-fork-mode parent
+
+
+
+
+
+调试出现Missing separate debuginfos, use: debuginfo-install glibc-2.17-222.el7.x86_64 
+需要 编辑/etc/yum.repos.d/CentOS-Debuginfo.repo, 设置其中 enabled=1
+	 yum install yum-utils
+	 debuginfo-install glibc-2.17-222.el7.x86_64
+
+b graph.c:665 可以到graph初始化所有xlator的开始位置
+##b 2544  （在此设置 Set follow-fork-mode parent ）之后有用子进程处理任务
+可以在fuse_bridge.c:5262 打上断点（notify函数，调用了fuse_thread_proc去读字符设备中的io请求），模式调在子进程模式，在main函数执行完后（event_dispatch监听等待之后）
+fuse_bridge.c:4964（arm上的sys_readv()）
+b fuse-bridge.c:4874 可以跳到 fuse_thread_proc中（因为是子线程处理）

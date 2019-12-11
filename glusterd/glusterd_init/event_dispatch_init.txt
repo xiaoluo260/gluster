@@ -1,0 +1,51 @@
+							event_dispatch (ctx->event_pool)
+1.event_dispatch_epoll (struct event_pool *event_pool)
+	struct event_thread_data{
+		struct event_pool *event_pool;
+		int 	event_index;
+	}
+	1.1	pthead_create(event_dispatch_epoll_worker(ev_data)),ev_data中放了之前申请的epool池
+		子线程处理流程：
+		1.1.1进入子线程函数，epoll_wait开始监听，当监听到事件时event_dispatch_epoll_handler (event_pool, &event)
+
+		目前注册到event_pool中的描述符有：
+			(gdb) p event_pool->ereg[0][0]
+			$10 = {fd = 13, events = 1073741851, gen = 1, ref = 1, do_close = 0, in_handler = 0, data = 0x669590, handler = 0x7fffeb9e5030 <socket_server_event_handler>, lock = {
+				spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __nusers = 0, __kind = 0, __spins = 0, __elision = 0, __list = {__prev = 0x0, 
+					  __next = 0x0}}, __size = '\000' <repeats 39 times>, __align = 0}}}
+			(gdb) p event_pool->ereg[0][1]
+			$11 = {fd = 14, events = 1073741851, gen = 1, ref = 1, do_close = 0, in_handler = 0, data = 0x6a0530, handler = 0x7fffeb9e5030 <socket_server_event_handler>, lock = {
+				spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __nusers = 0, __kind = 0, __spins = 0, __elision = 0, __list = {__prev = 0x0, 
+					  __next = 0x0}}, __size = '\000' <repeats 39 times>, __align = 0}}}
+
+			1.1.1.1event_slot_get (event_pool, idx)
+				event池中有个成员struct event_slot_opoll *ereg[1024],获取第idx个ereg,给slot，将其slot->ref++并返回
+				struct event_slot_epoll *ereg[1024]{
+					int		fd;
+					int 	events;
+					int 	gen;
+					int 	ref;
+					int 	do_close;
+					int		handler;
+					void	*data;
+					event_handler_t		handler;
+					gf_lock_t	lock;
+				}
+			1.1.1.2 handler(fd,idx,data,int poll_in,int poll_out,int poll_err);//此函数当数据流是connect时调用的是socket_server_event_handler()，当是EPOLLIN/EPOLLOUT时调用 socket_event_handler()
+				if (poll_in) ：（当有conncet请求或者数据读入时均成立，event->events =1）
+				1.1.1.2.1 accept (priv->sock, SA (&new_sockaddr), &addrlen) //每个cli命令都会建立一次通信，执行对应操作之后就会释放此sock，下次cli重新建立链接
+				1.1.1.2.2 新申请一个rpc_transport_t   *new_trans，将sockaddr存在peerinfo，将getsockname获取的sockaddr给myinfo（两者地址一致？）
+				1.1.1.2.3 get_transport_identifiers (new_trans) myinfo的地址拷贝给identifier
+				1.1.1.2.4 socket_init(new_trans) 初始化socket内核的一些参数nodely，windowssize等
+				1.1.1.2.5 rpc_transport_notify (this, RPC_TRANSPORT_ACCEPT, new_trans) 调用通知函数将此新的newsock注册到rpcsvc
+					1.rpcsvc_accept (svc, trans, new_trans)
+						1.1 rpcsvc_get_listener (svc, -1, listen_trans) 判断listen_trans是否为空，不为空继续
+						1.2 rpcsvc_program_notify (listener, RPCSVC_EVENT_ACCEPT, new_trans)
+				1.1.1.2.6 event_register (ctx->event_pool, new_sock,socket_event_handler,new_trans,1, 0)将new_sock注册到event_pool中，对应的处理函数是socket_event_handler，此函数只处理读入数据（EPOLLIN）不处理connect请求
+					1. socket_event_handler（）当下次来数据时走此处理流程
+						1.socket_event_poll_out (this)
+						2.socket_event_poll_in (this)
+						3.(ret < 0) || poll_err)当此条件成立时，表示epoll监听到EPOLLERR事件 打印EPOLLERR - disconnecting now退出					
+	1.2 主线程 主动回收第一个poolers[0]线程，其他子线程都设置了分离
+	完
+		

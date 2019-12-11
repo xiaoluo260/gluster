@@ -1,0 +1,152 @@
+volume mode-posix
+    type storage/posix
+    option volume-id 8ebb5ded-58bd-4836-b642-4d2f234c6e46
+    option directory /usr1/data
+end-volume
+
+volume mode-trash
+    type features/trash
+    option trash-internal-op off
+    option brick-path /usr1/data
+    option trash-dir .trashcan
+    subvolumes mode-posix
+end-volume
+
+volume mode-changetimerecorder
+    type features/changetimerecorder
+    option sql-db-wal-autocheckpoint 25000
+    option sql-db-cachesize 12500
+    option ctr-record-metadata-heat off
+    option record-counters off
+    option ctr-enabled off
+    option record-entry on
+    option ctr_lookupheal_inode_timeout 300
+    option ctr_lookupheal_link_timeout 300
+    option ctr_link_consistency off
+    option record-exit off
+    option db-path /usr1/data/.glusterfs/
+    option db-name data.db
+    option hot-brick off
+    option db-type sqlite3
+    subvolumes mode-trash
+end-volume
+
+volume mode-changelog
+    type features/changelog
+    option changelog-barrier-timeout 120
+    option changelog-dir /usr1/data/.glusterfs/changelogs
+    option changelog-brick /usr1/data
+    subvolumes mode-changetimerecorder
+end-volume
+
+volume mode-bitrot-stub
+    type features/bitrot-stub
+    option export /usr1/data
+    subvolumes mode-changelog
+end-volume
+
+volume mode-access-control
+    type features/access-control
+    subvolumes mode-bitrot-stub
+end-volume
+
+volume mode-locks
+    type features/locks
+    subvolumes mode-access-control
+end-volume
+
+volume mode-worm
+    type features/worm
+    option worm-file-level off
+    option worm off
+    subvolumes mode-locks
+end-volume
+
+volume mode-read-only
+    type features/read-only
+    option read-only off
+    subvolumes mode-worm
+end-volume
+
+volume mode-leases
+    type features/leases
+    option leases off
+    subvolumes mode-read-only
+end-volume
+
+volume mode-upcall
+    type features/upcall
+    option cache-invalidation off
+    subvolumes mode-leases
+end-volume
+
+volume mode-io-threads
+    type performance/io-threads
+    subvolumes mode-upcall
+end-volume
+
+volume mode-marker
+    type features/marker
+    option inode-quota off
+    option quota off
+    option gsync-force-xtime off
+    option xtime off
+    option quota-version 0
+    option timestamp-file /var/lib/glusterd/vols/mode/marker.tstamp
+    option volume-uuid 8ebb5ded-58bd-4836-b642-4d2f234c6e46
+    subvolumes mode-io-threads
+end-volume
+
+volume mode-barrier
+    type features/barrier
+    option barrier-timeout 120
+    option barrier disable
+    subvolumes mode-marker
+end-volume
+
+volume mode-index
+    type features/index
+    option xattrop64-watchlist trusted.ec.dirty
+    option index-base /usr1/data/.glusterfs/indices
+    subvolumes mode-barrier
+end-volume
+
+volume mode-quota
+    type features/quota
+    option deem-statfs off
+    option timeout 0
+    option server-quota off
+    option volume-uuid mode
+    subvolumes mode-index
+end-volume
+
+volume mode-io-stats
+    type debug/io-stats
+    option count-fop-hits off
+    option latency-measurement off
+    option log-level INFO
+    option unique-id /usr1/data
+    subvolumes mode-quota
+end-volume
+
+volume /usr1/data
+    type performance/decompounder
+    subvolumes mode-io-stats
+end-volume
+
+volume mode-server
+    type protocol/server
+    option transport.socket.keepalive-count 9
+    option transport.socket.keepalive-interval 2
+    option transport.socket.keepalive-time 20
+    option transport.tcp-user-timeout 0
+    option transport.socket.keepalive 1
+    option ping-timeout 42
+    option auth.addr./usr1/data.allow *
+    option auth-path /usr1/data
+    option auth.login.127536ef-fc5b-4f6b-bafe-98b039708dd3.password 30088389-d33e-4308-adf0-2099fc7077f3
+    option auth.login./usr1/data.allow 127536ef-fc5b-4f6b-bafe-98b039708dd3
+    option transport.address-family inet
+    option transport-type tcp
+    subvolumes /usr1/data
+end-volume

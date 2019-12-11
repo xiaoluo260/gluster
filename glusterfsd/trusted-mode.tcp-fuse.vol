@@ -1,0 +1,110 @@
+volume mode-client-0
+    type protocol/client
+    option send-gids true
+    option transport.socket.keepalive-count 9
+    option transport.socket.keepalive-interval 2
+    option transport.socket.keepalive-time 20
+    option transport.tcp-user-timeout 0
+    option password 30088389-d33e-4308-adf0-2099fc7077f3
+    option username 127536ef-fc5b-4f6b-bafe-98b039708dd3
+    option transport.address-family inet
+    option transport-type tcp
+    option remote-subvolume /usr1/data1
+    option remote-host node02
+    option ping-timeout 42
+end-volume
+
+volume mode-client-1
+    type protocol/client
+    option send-gids true
+    option transport.socket.keepalive-count 9
+    option transport.socket.keepalive-interval 2
+    option transport.socket.keepalive-time 20
+    option transport.tcp-user-timeout 0
+    option password 30088389-d33e-4308-adf0-2099fc7077f3
+    option username 127536ef-fc5b-4f6b-bafe-98b039708dd3
+    option transport.address-family inet
+    option transport-type tcp
+    option remote-subvolume /usr1/data
+    option remote-host node03
+    option ping-timeout 42
+end-volume
+
+volume mode-client-2
+    type protocol/client
+    option send-gids true
+    option transport.socket.keepalive-count 9
+    option transport.socket.keepalive-interval 2
+    option transport.socket.keepalive-time 20
+    option transport.tcp-user-timeout 0
+    option password 30088389-d33e-4308-adf0-2099fc7077f3
+    option username 127536ef-fc5b-4f6b-bafe-98b039708dd3
+    option transport.address-family inet
+    option transport-type tcp
+    option remote-subvolume /usr1/data
+    option remote-host node04
+    option ping-timeout 42
+end-volume
+
+volume mode-disperse-0
+    type cluster/disperse
+    option redundancy 1
+    subvolumes mode-client-0 mode-client-1 mode-client-2
+end-volume
+
+volume mode-dht
+    type cluster/distribute
+    option lock-migration off
+    subvolumes mode-disperse-0
+end-volume
+
+volume mode-write-behind
+    type performance/write-behind
+    subvolumes mode-dht
+end-volume
+
+volume mode-read-ahead
+    type performance/read-ahead
+    subvolumes mode-write-behind
+end-volume
+
+volume mode-readdir-ahead
+    type performance/readdir-ahead
+    option rda-cache-limit 10MB
+    option rda-request-size 131072
+    option parallel-readdir off
+    subvolumes mode-read-ahead
+end-volume
+
+volume mode-io-cache
+    type performance/io-cache
+    subvolumes mode-readdir-ahead
+end-volume
+
+volume mode-quick-read
+    type performance/quick-read
+    subvolumes mode-io-cache
+end-volume
+
+volume mode-open-behind
+    type performance/open-behind
+    subvolumes mode-quick-read
+end-volume
+
+volume mode-md-cache
+    type performance/md-cache
+    subvolumes mode-open-behind
+end-volume
+
+volume mode-io-threads
+    type performance/io-threads
+    subvolumes mode-md-cache
+end-volume
+
+volume mode
+    type debug/io-stats
+    option count-fop-hits off
+    option latency-measurement off
+    option log-level INFO
+    subvolumes mode-io-threads
+end-volume

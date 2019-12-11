@@ -1,0 +1,208 @@
+						cli
+1.glusterfs_ctx_new()
+	struct cli_status{
+	int 	argc;
+	char 	**argv;
+	char	debug;
+	glusterfs_ctx_t		*ctx;
+	struct cli_cmd_tree	tree; 
+	pthread_t	input;
+	const char 	*prompt;
+	int		rl_enabled;
+	int		rl_async;
+	int		r1_processing;
+	char	**matches;
+	char 	**matechesp;
+	char	*remote_host;
+	int		remote_port;
+	int		mode;
+	int		await_connected;
+	char	*log_file;
+	gf_loglevel_t	log_file;
+	char	*glusterd_sock;
+	}
+  struct cli_cmd_tree{
+	struct cli_state 	state; //初始化指向cli_statue
+	struct cli_cmd_tree root; //初始化指向tree
+	}
+	
+	1.1ctx->mem_acct_enable = gf_global_mem_acct_enable_get() =1;
+2.glusterfs_globals_init (ctx)
+	1.gf_log_globals_init()
+	2.gf_globals_init_once
+		2.1glusterfs_this_init()此处用到了pthread_key_create(this_xlator_key,free()),this_xlator_key是全局；有一个全局的global_xlator，它的name=glusterfs,type=global
+		2.2glusterfs_uuid_buf_init () 设置全局uuid_buf_key 对应值为free()
+		2.3glusterfs_lkowner_buf_init () 设置全局lkowner_buf_key =free
+		2.4glusterfs_leaseid_buf_init () leaseid_buf_key =free
+		2.5synctask_init () synctask_key =NULL
+		2.6syncopctx_init () syncopctx_key =free
+3.THIS =glusterfs_this_location ()返回全局的这个global_xlator，将global_xlator=THIS ->ctx =ctx;
+4.glusterfs_ctx_defaults_init (ctx)
+	4.1xlator_mem_acct_init (THIS, cli_mt_end);
+		cli_mt_end =enum_gf_comon_mem_types +enum_cli_mem_types,有很多mem枚举取最大值，开始for循环申请的所有mem_acct_rec为0；
+	4.2process_uuid = generate_glusterfs_ctx_id 
+	4.3iobuf_pool_new () 前面glusterd介绍过此处不再解释
+	4.4 event_pool_new()
+	4.5 mem_pool_new()涉及call_frame_t，call_stack_t,call_stub_t,dict_t,data_pair_t,data_t,log_buf_t
+5.cli_state_init (&state)
+6.parse_cmdline (int argc, char *argv[], struct cli_state *state)
+	循环解析参数：
+	6.1 cli_opt_parse(opt,state)
+		解析的全是--参数，如果是version，print-logdir，print-statedumodir直接打印并退出；设置模式：wignore-partition，wignore；也可以设置state的参数，mode= remote-host=  log-file=  time-out= gluster-sock= secure-mgmt=
+7.logging_init (ctx, &state)
+	log_file= /log/glusterfs/cli.log
+8.cli_rpc_init (struct cli_state *state)
+	获取全局的cli_prog，它的一个成员proctable指向了所有gluster命令的对应操作函数
+	mem_get(mem_pool)一个内存池DICT1（类型大小是THIS->ctx->dict_pool,这个是在glusterfs_ctx_default_init 中初始化的，大小是dict_t ）顺便会初始化hash->size=1，members=&members_internal,但是目前看members_internal在初始化中并没有附特殊的值，默认它指向NULL,并且将refcount+1
+	8.1rpc_transport_unix_options_build (dict_t **options, char *filepath,int frame_timeout)	
+		filepath=/run/glusterd.socket
+		8.1.1 dict_set_dynstr (dict, "transport.socket.connect-path", fpath)
+		dict是刚mem_get()的内存块DICT1，fpath=filepath
+			8.1.1.1data_from_dynstr (str)
+				申请一个ctx->dict_data_pool(其实还是mem_pool类型)大小内存块DICT2返回值强转为了data_t，DICT2->len =strlen(str)+1 =22,DICT2->data=fpath
+			8.1.1.2dict_set (DICT1, key, DICT2)-->dict_set_lk (this, key, value, 1)
+				key="transport.socket.connect-path"
+				8.1.1.2.1dict_lookup_common (dict_t *this, char *key)查询this内存块中的members数组指针中有没有成员key值与入参一致，如果有就返回该members[],没有就返回NULL，应该返回的是NULL，目前members指向的值NULL
+				8.1.1.2.2 临时变量pair =this->free_pair，把free_pair_in_use置为1（pair是data_pair_t类型，就是members的类型）这个free_pair之前没有找到初始化的地方？？？？
+				8.1.1.2.3 申请一个key大小内存，赋值为key内容
+				8.1.1.2.4 将DICT2的refcount+1后将DICT2给pair->value
+				8.1.1.2.5 将DICT1->members[0]也就是member_internal给pair->hash_next,将DICT1->member_list给pair->next，pair->prev=NULL,DICT1->count++,最终将这个pair赋给DICT1->member_list->prev
+		8.1.2 dict_set_str (dict, key, str)
+			key= "transport.address-family",str= "unix"
+			8.1.2.1 str_to_data (str)
+				mem_get0()返回一个data_t的内存块，DICT3->len=strlen(str)+1,DICT->data=str
+			8.1.2.2 dict_set (this, key, data)-->dict_set_lk (this, key, value, 1)
+				8.1.2.2.1注意在上一步free_pair_in_use 置为了1，所以此流程和上不有些不一样pair = mem_get0 (THIS->ctx->dict_pair_pool)，也就是重新申请了一个内存块DICT4（返回值强转为data_pair_t）
+				8.1.2.2.2 申请一个key大小内存，赋值为key内容
+				8.1.1.2.3 将DICT3的refcount+1后将DICT3给pair->value
+				8.1.1.2.4 因为之前链接过一个pair，因此此处是以插入的方式，可以看到如果key不重复，那么DICT1->members[]始终只有一个成员，就是新创建的这个pair（DICT4），这些用pair->hash_next链接起来，这只是其中一个链表,其中members[]是头结点的作用；还有一条线就是用pair->next和pair->prev练成一个双向链表，因为是头插入的方式，此处有一个DICT1->members_list一直在记录头节点，最后将DICT1->count++
+		8.1.3 dict_set_str (dict, "transport.socket.nodelay", "off")
+		8.1.4 dict_set_str (dict, "transport-type", "socket")
+		8.1.5 dict_set_str (dict, "transport.socket.keepalive", "off")
+		8.1.6 *option = dict, option指针指向了dict，那么原来的option也是mem_get0来的，注意有内存泄露
+	8.2 rpc_clnt_new (options, this, this->name, 16)
+		this ==THIS name=glusterfs,struct rpc_clnt rpc
+		8.2.1 mem_pool_new (struct rpc_req, reqpool_size)
+		8.2.2 mem_pool_new (struct saved_frame,reqpool_size)
+		8.2.3 rpc_clnt_connection_init (rpc, ctx, options, name)
+			8.2.3.1 dict_get_int32 (options, "frame-timeout",&conn->frame_timeout)，未找到key，设置rpc->conn->frame_timeout=1800
+			8.2.3.2 与上一个类似，key=ping-timeout，设为默认值 rpc->conn->ping_timeout =0
+			8.2.3.3 rpc_transport_load (ctx, options, name)
+				struct rpc_transport *trans，*return_trans；trans->name="glusterfs"判断各个key值：，如果不存在则设为默认
+				8.2.3.3.1 tran->bind_insecure =1
+				8.2.3.3.2 打开socket.so动态库，将句柄给trans->dl_handle
+				8.2.3.3.3 trans->ops=tops;tops是一堆操作函数集
+				8.2.3.3.4 各种初始化trans->init=init；trans->fini=fini；trans->reconfigure=reconfigure
+				8.2.3.3.5 新创建一个 volume_opt_list_t *vol_opt
+					struct volume_opt_list{
+						struct list_head 	list;
+						volume_option_t		*given_opt;
+					}; 将动态库的options赋值给given_opt，然后将其list链接在THIS->volume_options
+				8.2.3.3.6 xlator_options_validate_list (this, options, vol_opt,NULL))循环options->members_list链接的每个DICTn,检查key有效性
+					8.2.3.3.6.1 dict_foreach (options, xl_opt_validate, &stub),循环options->members_list链接的每个DICTn，将每个key和value传给下面函数
+						8.2.3.3.6.2 xl_opt_validate (dict_t *dict, char *key, data_t *value, void *data)
+							8.2.3.3.6.2.1 xlator_volume_option_get_list (vol_opt, key)，找到key对应的options[i],并将其返回给opt
+							8.2.3.3.6.2.2 xlator_option_validate (xl, key, value->data, opt, &errstr) 根据传进来的options[i]->type获取对应的函数并调用执行它，以transport.socket.nodelay为例，对应的函数是：
+							8.2.3.3.6.2.3 xlator_option_validate_bool (xlator_t *xl, const char *key, const char *value,volume_option_t *opt, char **op_errstr) 用来检查key对应的value是否为yes/no,1/0,on/off,ture/false
+							8.2.3.3.6.2.4 看key是否符合key[0]的格式，不符合重新设置options->key，加到之前DICT->members_list中
+				8.2.3.3.7 trans->options = options
+				8.2.3.3.8 调用之前拿到的init（trans）
+					申请 struct socket_private_t *priv;
+					8.2.3.3.8.1 priv->ref->cnt =1,ref->data=priv ,ref->release=socket_poller_mayday(此函数作用是priv->own_thread_done=1,调用pthread_cond_signal唤醒一个条件锁)
+					8.2.3.3.8.2 检查trans->options:non-blocking-io 未找到返回NULL
+					8.2.3.3.8.3 检查transport.socket.nodelay,设置priv->nodelay=0
+					8.2.3.3.8.4 检查tcp-window-size,未找到则：
+						priv->windowsize=0
+						priv->keep*=*
+					8.2.3.3.8.5 检查transport.socket.keepalive
+					8.2.3.3.8.6 检查transport.tcp-user-timeout
+					8.2.3.3.8.7 检查transport.socket.keepalive-time
+					8.2.3.3.8.8 检查transport.socket.keepalive-interval
+					8.2.3.3.8.9 检查transport.socket.keepalive-count
+					8.2.3.3.8.10 检查transport.socket.listen-backlog
+					8.2.3.3.8.11 检查transport.socket.read-fail-log
+					以上未找到则均给pri->* 赋值为默认值
+					8.2.3.3.8.12priv->ssl_enabled = _gf_false,开始设置ssh相关的key值
+					8.2.3.3.8.13 多项关于ssl的设置，暂时跳过；最后将 trans->private=priv
+			8.2.3.4 rpc_transport_ref (trans)
+				trans->refcount++
+			8.2.3.5 rpc_transport_register_notify (conn->trans, rpc_clnt_notify,conn)，notify获取一个操作函数
+			8.2.3.6 saved_frames_new (),申请一个struct saved_frames 结构体
+		8.2.4 dict_get_str_boolean (options, "auth-null", 0)
+			key= "auth-null",检查options链表中有没有auth-null-key，从刚才来看是没有的，返回0
+	8.3 rpc_clnt_register_notify (rpc, cli_rpc_notify, this)
+	8.4 rpc_clnt_start(rpc)
+		8.4.1 rpc_clnt_reconnect (conn)
+			8.4.1.1 rpc_transport_connect (trans,conn->config.remote_port) //port=0
+				8.4.1.1.1 socket_connect(trans,port)
+					8.4.1.1.1.1 socket_client_get_remote_sockaddr (this,&sock_union.sa,&sockaddr_len, &sa_family)
+						8.4.1.1.1.2 client_fill_address_family (this, &sockaddr->sa_family)
+						8.4.1.1.1.3 af_unix_client_get_remote_sockaddr (this, sockaddr, sockaddr_len) //设置sun_path
+					8.4.1.1.1.2分别设置关闭ssl功能
+					8.4.1.1.1.3 赋值给this->peerinfo.sockaddr：
+						{ss_family = 1,	__ss_padding = "/var/run/glusterd.socket", __ss_align = 0}
+					8.4.1.1.1.4 client_bind (this, SA (&this->myinfo.sockaddr),&this->myinfo.sockaddr_len, priv->sock)
+						this:trans,socaaddr,sockaddr_len:0,sock:10
+						未设置bind_path,使用默认值，return 0
+					8.4.1.1.1.5__socket_nonblock (priv->sock) 设置sock描述符的状态不阻塞
+					8.4.1.1.1.6 connect向服务器发送链接请求 成功之后会置位：priv->connected = 0;priv->is_server = _gf_false;
+					8.4.1.1.1.7 trans->refcount++
+					8.4.1.1.1.8 event_register (ctx->event_pool, priv->sock,socket_event_handler,this, 1, 1)
+						handle =socket_event_handler (int fd, int idx, void *data,int poll_in, int poll_out, int poll_err)
+						1. event_register_epoll(event_pool, fd, handler, data,poll_in, poll_out)
+							1.1 event_slot_alloc (event_pool, fd) 按顺序将fd写入（1024*1024的二维）ereg[].table[].fd中
+							1.2 event_slot_get(event_pool,idx)
+							通过idx找到对应的table[i],并对其refcount++	
+							1.3 填充slot（table[i]）的值，给epoll_event
+							1.4 epoll_ctl (event_pool->fd, EPOLL_CTL_ADD, fd,&epoll_event) //读、写、异常都关注
+							返回idx
+			8.4.1.2 gf_timer_call_after (clnt->ctx,ts,rpc_clnt_reconnect,conn)
+				8.4.1.2.1 gf_timer_registry_init (ctx)
+					gf_thread_create (&reg->th, NULL, gf_timer_proc, reg),设置线程忽略信号后创建新线程，并执行gf_timer_proc(reg)函数
+					8.4.1.2.1.1 gf_timer_proc (ctx->timer)每1s循环一次，检查ctx->timer->active链表中新添加的list（时间应该是比当前新），执行callbk (event->data)回调函数rpc_clnt_reconnect，那么子线程会再次去connect，建立本地通信socket，相当于每隔3s建立新线程客户端去链接服务端，原来主线程关闭
+				8.4.1.2.2 累加delta（3s 0ns），那么at就是当前时间+3s；给刚申请的event赋值，循环active链表，应该是空，添加刚申请的event，会被子线程处理callbk(data)
+9.cli_quotad_clnt_rpc_init ()
+	9.1申请一个新的dict_t内存池rpc_opts，
+	9.2dict_set()"transport.address-family", "unix"
+	9.3dict_set() "transport-type", "socket"
+	9.4dict_set() "transport.socket.connect-path","/var/run/gluster/quotad.socket"
+	9.5cli_quotad_clnt_init (THIS, rpc_opts)
+		9.5.1dict_set()"transport.address-family", "unix"
+		9.5.2dict_set()"transport-type", "socket"
+		9.5.3dict_set()"transport.socket.connect-path","/var/run/gluster/quotad.socket"
+		9.5.4rpc_clnt_new (options, this, this->name, 16)参考8.2
+		9.5.5 rpc_clnt_register_notify (rpc, cli_quotad_notify, this)  //cli_quotad_notify赋值给rpc->notify
+		9.5.6 rpc_clnt_start (rpc)
+	9.6 global_quotad_rpc = rpc;
+10.cli_cmds_register (&state)
+	全局的struct cli_cmd volume_cmds[]存了所有命令的用法格式、对应的函数、函数说明信息,基本上只初始化了前三个值，后两个为空
+	struct cli_cmd volume_cmds[]{
+		const char 	*pattern;
+		cli_cmd_cbk_t	*cbk;
+		const char	*desc;
+		cli_cmd_reg_cbk_t	*reg_cbk;
+		gf_boolean_t	disable;
+	}例如:{ "volume info [all|<VOLNAME>]",
+          cli_cmd_volume_info_cbk,
+          "list information of all volumes"},
+	10.1 cli_cmd_volume_register (struct cli_state *state)
+		循环全局的volume_cmds
+		1.1.1cli_cmd_register (&state->tree, cmd)
+			1.1.1.1 cli_cmd_tokenize (cmd->pattern)
+				1.1.1.1.1 is_template_balanced (template)//检查<>()[]成对匹配
+				1.1.1.1.2 cli_cmd_token_count (template) //count是template的单词和符号个数+1
+				1.1.1.1.3 申请count+1个字符指针然后调用cli_cmd_tokens_fill (tokens, template)，将每个单词和符号存在申请的指针中
+			1.1.1.2 cli_cmd_ingest (tree, tokens, cmd->cbk, cmd->desc,cmd->pattern)创建n个cli_cmd_word，每个cli_cmd_word->word存一个单词(最后一个存cmd信息)，每个放在前一个->nextwords中（数组指针）
+				1.1.1.2.1 cli_cmd_nextword (word, token) 查找匹配token的cli_cmd_word
+				1.1.1.2.2 cli_cmd_newword (word, token)新申请一个cli_cmd_word，并将其存在word->nextwords数组指针中，返回
+	10.2 cli_cmd_probe_register (state)同上，不管什么类型的命令全部存在state->tree->root->nextwords中
+	10.3 cli_cmd_system_register (state)
+	10.4 cli_cmd_misc_register (state)
+	10.5 cli_cmd_snapshot_register (state)
+	10.6 cli_cmd_global_register (state)
+11. cli_cmd_cond_init()
+	初始化两对全局的互斥和条件锁cond_mutex/cond ,conn_mutex/conn	
+						
+
+				
+		

@@ -1,0 +1,73 @@
+1.cli_cmds_register (&state)
+2. cli_cmd_cond_init()
+3. cli_input_init (&state)
+	3.0 如果直接带了参数 则pthread_create (&state->input, NULL, cli_batch, state)
+	赋值：全局
+		struct rpc_clnt_program cli_prog = {
+			.progname  = "Gluster CLI",
+			.prognum   = GLUSTER_CLI_PROGRAM,
+			.progver   = GLUSTER_CLI_VERSION,
+			.numproc   = GLUSTER_CLI_MAXVALUE,
+			.proctable = gluster_cli_actors,
+		};
+	3.1 cli_rl_enable (state) 直接返回0
+*******call_frame_t  *frame在流程中的作用
+	3.2 创建子线程处理cli_input（state）
+		3.2.1 cli_cmd_process_line (state, cmd)
+			3.2.1.1 cli_cmd_input_token_count (text) 计算text内连续有效的空格，末尾不算，即count+1个单词（算上gluster）
+			3.2.1.2 cli_cmd_process (state, count, tokens) token是一个数组指针，里面放了多个参数
+				校验每一个参数找到提前注册好的命令；
+				3.2.1.2.1 cli_cmd_needs_connection (word)默认120s，如果没有设置的话，如果命令行最后一个单词是quit,help,exit返回0，是getwd返回1
+				3.2.1.2.2 cli_cmd_await_connected (state->await_connected)循环：阻塞等待全局conn条件锁被唤醒 （每120s检查connect是否置为了1）
+					1.seconds_from_now (conn_timo, &ts)获取conn_timo秒后的系统时间
+					word信息为{tree = 0x7fffffffe410, word = 0x6de490 "status", filler = 0x0, match = 0x0, cbkfn = 0x4163f0 <cli_cmd_peer_status_cbk>, desc = 0x44edec "list status of peers", pattern = 0x44ede0 "peer status", nextwords_cnt = 0, nextwords = 0x0}
+				3.2.1.2.3 word->cbkfn (state, word, (const char **)argv, argc)，此处调试peer status对应函数：cli_cmd_peer_status_cbk()
+					3.2.1.2.3.1 create_frame (THIS, THIS->ctx->pool)， 申请2个mem_pool：frame和stack，将frame链在stack的myframes链表头上，将stack链在ctx->pool的all_frames链表头上，
+					3.2.1.2.3.2 gf_cli_list_friends(frame, THIS, (void *)GF_CLI_LIST_PEERS)
+						参数说明GF_CLI_LIST_PEERS =1，并做了类型强转long
+						1.cli_cmd_submit (NULL, &req, frame, cli_rpc_prog,GLUSTER_CLI_LIST_FRIENDS, NULL,this, gf_cli_list_friends_cbk,(xdrproc_t) xdr_gf1_cli_peer_list_req);
+							参数说明 req：gf1_cli_peer_list_req  req
+							1.1 cli_submit_request (rpc, req, frame, prog,procnum, NULL, this, cbkfn, xdrproc)
+								1.1.1 xdr_sizoef() 临时定义一个xdr，将数据编码后写入，返回数据长度，用来判断申请的iobuf的大小
+									1.1.1.1 xdr =XDR_ENCODE
+									1.1.1.2 xdr_gf1_cli_peer_list_req (XDR *xdrs, gf1_cli_peer_list_req *req)
+										1.1.1.2.1 将req->flag（GF_CLI_LIST_PEERS） 编码放到xdr中8字节
+										1.1.1.2.2 将req->dict.dict_val 编码放到xdr中（dict_val是空值）
+								1.1.2 iobuf_get2 (this->ctx->iobuf_pool, xdr_size)
+								1.1.3 iobref = iobref_new ()
+								1.1.4 iobref_add (iobref, iobuf);
+								1.1.5 xdr_serialize_generic (iov, req, xdrproc)
+									1.1.5.1  xdr_gf1_cli_peer_list_req (XDR *xdrs, gf1_cli_peer_list_req *req) xdr使用iov定义的内存空间，将req相关信息编码写到xdr，消息一直保存（将该内存指向一个xdr就可以解码出消息）
+								1.1.6 rpc = global_rpc
+								1.1.7 rpc_clnt_submit (rpc, prog, procnum, cbkfn,&iov, count,NULL, 0, iobref, frame, NULL, 0, NULL, 0, NULL)
+									参数说明 prog=cli_rpc_prog ,count=1,cbkfn=gf_cli_list_friends_cbk()
+									1.1.7.1 rpc_clnt_record (rpc, frame, prog,procnum, proglen,&rpchdr, callid)
+										1.1.7.1.1 rpc_clnt_record_build_record (clnt, prog->prognum,prog->progver,procnum, hdrlen,callid, &au,rpchdr);
+											1.rpc_clnt_fill_request (prognum, progver, procnum,xid, au, &request, auth_data) 添加鉴权信息
+									1.1.7.2 给req的msg和rsp赋值
+									1.1.7.3 rpc_transport_submit_request (conn->trans, &req)
+										trans->ops->submit_request =socket_submit_request() 提交req请求
+										1.1.7.3.1 新申请struct ioq  *entry；
+											计算req中三个iovec的长度给size（将临时变量地址最高位置为1？？）size转为网络字节序给entry->fraghdr，将req的rpchdr，proghdr，progpayload三个ivoec拷贝到entry->vector[1]开始，vector[0]放的是entry自己，
+										1.1.7.3.2  __socket_ioq_churn_entry (this, entry, 1)
+											1.1.7.3.2.1 __socket_writev (this, entry->pending_vector,entry->pending_count,&entry->pending_vector,&entry->pending_count)
+												1.  __socket_rwv (this, vector, count,pending_vector, pending_count, NULL, 1)
+													循环count-- ：
+														sys_writev (sock, opvector, IOV_MIN(opcount))向对应sock写entry->pendiovec中的数据，并记录写的数据长度到this->total_bytes_write
+														计算本次写入的数据长度是否>=iovec->len，如果成功，指针偏移，计数减一，写下一个iovec，如果不成功，则继续写本个iovec
+														当count计数=0时表示写完 退出循环
+														异常：当计数>0且writev返回0时，可能链接中断，打印"EOF from peer %s", this->peerinfo.identifier",这种情况是客户端向服务器写数据时有可能发生，errno = ENOTCONN
+										1.1.7.3.3 sys_write (priv->pipe[1], &a_byte, 1)???作用未知
+									1.1.7.4  __save_frame (rpc, frame, rpcreq)
+									1.1.7.5 rpc_clnt_check_and_start_ping (rpc)
+										rpc_clnt_submit (rpc, &clnt_ping_prog,GF_DUMP_PING, rpc_clnt_ping_cbk, NULL, 0,NULL, 0, NULL, frame, NULL, 0, NULL, 0, NULL)	
+							1.2 cli_cmd_await_response (timeout)
+				3.2.1.3 (void) cli_cmd_status_reset ()				
+4. 主线程：event_dispatch (ctx->event_pool)
+	4.1 pthread_create (&t_id, NULL,event_dispatch_epoll_worker,ev_data)
+		子线程4.1.1 epoll_wait (event_pool->fd, &event, 1, -1)
+		4.1.2 socket_event_handler (int fd, int idx, void *data,int poll_in, int poll_out, int poll_err)
+			检测和glusterd链接的端口，当返回数据时走epoll_in标志，将数据接收（glusterd处理的结果）
+		
+	
+	

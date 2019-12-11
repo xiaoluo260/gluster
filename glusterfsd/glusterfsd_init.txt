@@ -1,0 +1,175 @@
+/usr/local/sbin/glusterfsd -s node03 --volfile-id mode.node03.usr1-data1 -p /var/run/gluster/vols/mode/node03-usr1-data1.pid -S /var/run/gluster/08162f6f702c318a6cd2297e722782e6.socket --brick-name /usr1/data1 -l /var/log/glusterfs/bricks/usr1-data1.log --xlator-option *-posix.glusterd-uuid=bff4115a-44e6-4635-96ed-4d536cc097e8 --brick-port 49152 --xlator-option mode-server.listen-port=49152
+
+runner_add_args (&runner, SBIN_DIR"/glusterfsd", "-s", brickinfo->hostname, "--volfile-id", volfile,
+												 "-p", pidfile, "-S", socketpath,
+												 "--brick-name", brickinfo->path,
+												 "-l", brickinfo->logfile,
+												 "--xlator-option", glusterd_uuid,
+												 NULL);
+
+0.glusterfs_ctx_defaults_init (glusterfs_ctx_t *ctx)
+	0.1ctx->process_uuid = generate_glusterfs_ctx_id ()
+1.parse_cmdline()
+	1.1 cmd_args = &ctx->cmd_args
+	1.2 ctx->secure_mgmt = cmd_args->secure_mgmt //0
+	1.3 ctx->process_mode = process_mode;  #define GF_SERVER_PROCESS   0
+	1.4 parse_opts 
+		1.4.1gf_remember_backup_volfile_server (arg)
+			server =malloc()
+			1.4.1.1 server->volfile_server = gf_strdup(arg) // node03
+			1.4.1.2 cmd_args->volfile_server = server->volfile_server
+			1.4.1.3 cmd_args->curr_server = server
+			cmd_args->volfile_server_port =49152
+		1.4.2 cmd_args->log_file = gf_strdup (arg) ///var/log/glusterfs/bricks/usr1-data1.log
+		1.4.3 cmd_args->pid_file = gf_strdup (arg) ///var/run/gluster/vols/mode/node03-usr1-data1.pid
+		1.4.4 cmd_args->sock_file = gf_strdup (arg) ///var/run/gluster/08162f6f702c318a6cd2297e722782e6.socket
+			vofile的设置需要参数中带有 -f，因此认为没有在参数中解析; 同样run_id设置需要参数中带有 -r
+			//猜测 cmd_args->volfile 暂时是NULL // /var/lib/glusterd/vols/mode/mode.node02.usr1-data.vol
+2.logging_init (ctx, argv[0])
+3.strcat (cmdlinestr, " ");
+	strncat (cmdlinestr, argv[i],
+	ctx->cmdlinestr = gf_strdup (cmdlinestr)
+4.daemonize (ctx)
+5.mem_pools_init ()
+6.set_oom_score_adj (ctx)
+7.syncenv_new (0,0,0)
+	newenv->stacksize= 2M
+	newenv->procmin = procmin; //2
+	newenv->procmax = procmax; //16
+	循环创建了两个子线程，分别执行了pthread_cond_timewait()，
+		当env->runq有任务时跳出循环，
+		或者当等待600s并且procs>2，清理数据退出子线程
+	等待env->runq有数据时，获取其所在synctask结构体，并对其赋值（包括proc）
+	list_empty (&env->runq)；条件
+	task = list_entry (env->runq.next, struct synctask, all_tasks);
+	swapcontext (&task->proc->sched, &task->ctx)
+	主线程继续往下走
+cmd_args:{volfile_server = 0x43738 "node01", curr_server = 0x436e8, volfile_servers = {next = 0x436e8, prev = 0x436e8}, volfile = 0x0, log_server = 0x0, 
+  log_level = GF_LOG_INFO, log_file = 0x43908 "/var/log/glusterfs/bricks/home-data.log", log_ident = 0x43198 "home-data", logger = gf_logger_glusterlog, 
+  log_format = gf_logformat_withmsgid, log_buf_size = 5, log_flush_timeout = 120, max_connect_attempts = 0, print_exports = 0x0, print_netgroups = 0x0, 
+  volfile_server_port = 0, volfile_server_transport = 0x0, log_server_port = 0, pid_file = 0x437d8 "/var/run/gluster/vols/mode/node01-home-data.pid", 
+  sock_file = 0x43848 "/var/run/gluster/04e3f5bd7b40a04570cace7b325cdbf2.socket", no_daemon_mode = 0, run_id = 0x0, debug_mode = 0, read_only = 0, acl = 0, selinux = 0, 
+  capability = 0, enable_ino32 = 0, worm = 0, mac_compat = 0, fopen_keep_cache = 2, gid_timeout = 0, gid_timeout_set = 0 '\000', aux_gfid_mount = 0, 
+  global_timer_wheel = 0, xlator_options = {next = 0x43ac0, prev = 0x43970}, fuse_direct_io_mode = 2, use_readdirp = 0x0, no_root_squash = 0, volfile_check = 0, 
+  fuse_entry_timeout = -1, fuse_negative_timeout = 0, fuse_attribute_timeout = -1, volume_name = 0x0, fuse_nodev = 0, fuse_nosuid = 0, dump_fuse = 0x0, client_pid = 0, 
+  client_pid_set = 0, uid_map_root = 0, background_qlen = 0, congestion_threshold = 0, fuse_mountopts = 0x0, mem_acct = 1, resolve_gids = 0, mount_point = 0x0, 
+  volfile_id = 0x43780 "mode.node01.home-data", brick_port = 49152, brick_name = 0x438c0 "/home/data", brick_port2 = 0, secure_mgmt = 0, oom_score_adj = 0x0, 
+  event_history = 0x0}
+8.glusterfs_volumes_init (glusterfs_ctx_t *ctx)
+	8.1glusterfs_listener_init (ctx)  （创建本地sock监听端口）
+		8.1.1rpcsvc_transport_unix_option_build(&option,sock_file)
+			"transport.socket.listen-path" sock_file
+			"transport.address-family", "unix"
+			"transport.socket.nodelay", "off"
+			"transport-type", "socket"
+		8.1.2 rpcsvc_init(THIS,ctx,option,8)
+			8.1.2.1 rpcsvc_init_option(svc,option)
+			svc->memfactor =8
+			svc->register_portmap =true
+			svc->rxpool=mem_pool_new()
+			8.1.2.2 rpcsvc_auth_init (svc, options)
+			svc->options = options
+			svc->ctx = ctx;
+			svc->xl = xl;
+			//新申请newprog =gluster_dump_prog, newprog->program链在svc->program
+		8.1.3 rpcsvc_register_notify (rpc, glusterfs_rpcsvc_notify, THIS)
+		8.1.4 rpcsvc_create_listeners(rpc,options,"glusterfsd")
+			8.1.4.1 rpcsvc_create_listeners(rpc,options,"socket.glusterfsd")
+				8.1.4.1.1 rpc_transport_load (svc->ctx, options, name) 动态载入相应类型的RPC 库并调用库的init 初始化, 如果是rdma.so则返回NULL
+					8.1.4.1.1.1 trans->init (trans)
+		8.1.5 rpcsvc_program_register (rpc, &glusterfs_mop_prog)
+		8.1.6 ctx->listener = rpc
+	8.2 glusterfs_mgmt_init (ctx) （与glusterd-24007端口建立链接）
+	*****************************gdb在此步骤直接跳到event_dispatch()模式是 follow-fork-mode parent,看代码本函数之后return ret,意味着后面的get_volfp不走了 ，也是在cmd_args解析之后看到volfile = 0x0
+		8.2.1 rpc_transport_inet_options_build (&options, host, port)
+			option(dict)是一个新的dict数据结构，用来存储tcp通信的相关信息，host=node01,port=24007 ,这是glusterd的端口，glusterfsd要connect上去
+		8.2.2 rpc_clnt_new (options, THIS, THIS->name, 8)
+			8.2.2.1 rpc = GF_CALLOC (1, sizeof (*rpc), gf_common_mt_rpcclnt_t)
+			8.2.2.2 rpc_clnt_connection_init (rpc, ctx, options, name)
+			8.2.2.3 trans = rpc_transport_load (ctx, options, name) 新建了一个trans并赋值
+			trans->refcount++
+			8.2.2.4 rpc_transport_register_notify (conn->trans, rpc_clnt_notify,conn)
+		8.2.3 rpc_clnt_register_notify (rpc, mgmt_rpc_notify, THIS)
+		8.2.4 rpcclnt_cbk_program_register (rpc, &mgmt_cbk_prog, THIS),
+		8.2.5 rpc_clnt_start (rpc)
+			8.2.5.1 rpc_clnt_reconnect (conn);
+				8.2.5.1.1 socket_client_get_remote_sockaddr (this, &sock_union.sa,&sockaddr_len, &sa_family)
+					1.sockaddr->sa_family = AF_INET
+					2.af_inet_client_get_remote_sockaddr (this, sockaddr,sockaddr_len)
+						2.1 gf_resolve_ip6 (remote_host, remote_port,sockaddr->sa_family, &this->dnscache, &addr_info)
+				8.2.5.1.2 sock_union.sin.sin_port = htons (port）
+				8.2.5.1.3 priv->sock = socket (sa_family, SOCK_STREAM, 0)
+				8.2.5.1.4 SA (&this->myinfo.sockaddr)->sa_family =SA (&this->peerinfo.sockaddr)->sa_family;
+				8.2.5.1.5 client_bind (this, SA (&this->myinfo.sockaddr),&this->myinfo.sockaddr_len, priv->sock)
+				8.2.5.1.6 connect (priv->sock,SA (&this->peerinfo.sockaddr),this->peerinfo.sockaddr_len);
+				8.2.5.1.7 priv->connected = 0;priv->is_server = _gf_false;
+				8.2.5.1.8 event_register (ctx->event_pool, priv->sock,socket_event_handler,this, 1, 1)
+			8.2.5.2 conn->reconnect =gf_timer_call_after (clnt->ctx, ts,rpc_clnt_reconnect,conn);
+	***********************
+		8.3 fp = get_volfp (ctx)
+		8.4 glusterfs_process_volfp (ctx, fp)
+			8.4.1 glusterfs_graph_prepare (graph, ctx, ctx->cmd_args.volume_name)
+				8.4.1.1 glusterfs_graph_settop (graph, ctx, volume_name)找volume “mode”匹配的xlator
+			8.4.2 glusterfs_graph_activate（）
+				8.4.2.1 graph->leaf_count = glusterfs_count_leaves(root)
+				8.4.2.2 glusterfs_graph_validate_options (graph)
+				8.4.2.3 glusterfs_graph_init (graph)
+				8.4.2.4 glusterfs_graph_unknown_options (graph)
+				8.4.2.5 glusterfs_graph_parent_up (graph)
+	************************
+9. event_dispatch (ctx->event_pool) 建立tcp -49152通信端口
+	9.1event_dispatch_epoll (struct event_pool *event_pool)
+	此时的event_pool的监听对象
+
+fd =9是什么时候注册到event_pool中的
+当glusterfsd收到消息 创建好graph（内含19个xlator）后的event_pool的状态 走的是fd=9这个状态
+(gdb) p event_pool->ereg[0][0]
+$19 = {fd = 7, events = 1073741851, gen = 1, ref = 1, do_close = 0, in_handler = 0, data = 0x48548, handler = 0xb3849ef5 <socket_server_event_handler>, lock = {
+    spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, __nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, 
+      __size = '\000' <repeats 23 times>, __align = 0}}}  mad.socket 本地监听端口
+(gdb) p event_pool->ereg[0][1]
+$20 = {fd = 9, events = 1073741851, gen = 1, ref = 2, do_close = 0, in_handler = 1, data = 0x65048, handler = 0xb3847bdd <socket_event_handler>, lock = {spinlock = 1, 
+    mutex = {__data = {__lock = 1, __count = 0, __owner = 24161, __kind = 0, __nusers = 1, {__spins = 0, __list = {__next = 0x0}}}, 
+      __size = "\001\000\000\000\000\000\000\000a^\000\000\000\000\000\000\001\000\000\000\000\000\000", __align = 1}}} connect到glusterd的fd
+(gdb) p event_pool->ereg[0][2]
+$21 = {fd = 11, events = 1073741851, gen = 1, ref = 1, do_close = 0, in_handler = 0, data = 0xb2e2fe70, handler = 0xb3849ef5 <socket_server_event_handler>, lock = {
+    spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, __nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, 
+      __size = '\000' <repeats 23 times>, __align = 0}}}
+(gdb) p event_pool->ereg[0][3]
+$22 = {fd = 13, events = 1073741851, gen = 1, ref = 1, do_close = 0, in_handler = 0, data = 0xb2e53a38, handler = 0xb3849ef5 <socket_server_event_handler>, lock = {
+    spinlock = 0, mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __kind = 0, __nusers = 0, {__spins = 0, __list = {__next = 0x0}}}, 
+      __size = '\000' <repeats 23 times>, __align = 0}}}
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+调试：
+	要忽略OPENSLL信号 	
+	(gdb) handle SIGILL nostop noprint
+1. gdb glusterd
+2. b main
+3. 其他断点说明:glusterfsd.c:2544
+				event-epoll.c:618 ==dispatch
+				socket.c:2379
+				rpcsvc-auth.c:385
+				syncop.c:571 synctask_create
+				glusterd-handler.c:4110
+				socket.c:2280 socket_proto_state_machine (this, &pollin) 
+4. 在刚开始时设置(因为在deamon那创建了守护进程，主进程已经回收了):
+	set follow-fork-mode child
+	set detach-on-fork on(默认模式；表示只调试一个进程，另一个进程正常运行；如果置为off，另一个进程暂停)
+	在2544行停一次，执行（由于此过程开始有创建多个子进程处理任务）：
+	set follow-fork-mode parent
+5.调试线程：
+	info thread
+	thread n (表示跳转到某个线程)
+	此处设置有点问题，没有控制好其他线程的运行状态，可以通过在对应任务处打断点来跳到对应线程处
