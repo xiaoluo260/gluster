@@ -1,0 +1,94 @@
+#!/bin/bash
+#
+# flashcache	Init Script to manage cachedev loads
+#
+# chkconfig: 345 9 98
+# description: Flashcache Management
+
+# Flashcache options
+# modify this before using this init script
+
+
+SSD_DISK=/dev/loop0
+BACKEND_DISK=/dev/sdb
+CACHEDEV_NAME=cachedev
+MOUNTPOINT=/brick
+FLASHCACHE_MODE=back
+
+# Just a check, to validate the above params are set
+[ -z "$SSD_DISK" ] && exit 10
+[ -z "$BACKEND_DISK" ] && exit 11
+[ -z "$CACHEDEV_NAME" ] && exit 12
+[ -z "$MOUNTPOINT" ] && exit 13
+[ -z "$FLASHCACHE_MODE" ] && exit 14
+
+
+SSD_DISK1=/dev/loop1
+BACKEND_DISK1=/dev/sdc
+CACHEDEV_NAME1=cachedev1
+MOUNTPOINT1=/brick1
+FLASHCACHE_MODE1=back
+
+# Just a check, to validate the above params are set
+[ -z "$SSD_DISK1" ] && exit 10
+[ -z "$BACKEND_DISK1" ] && exit 11
+[ -z "$CACHEDEV_NAME1" ] && exit 12
+[ -z "$MOUNTPOINT1" ] && exit 13
+[ -z "$FLASHCACHE_MODE1" ] && exit 14
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+# create ssd by tmpfs
+#if not set /dev/shm size, the file of ssd.img is in default ,for example 920MB, however you set
+mount tmpfs /dev/shm -t tmpfs -o size=2048m
+
+dd if=/dev/zero of=/dev/shm/ssd.img bs=1024k count=1000
+losetup /dev/loop0 /dev/shm/ssd.img
+
+dd if=/dev/zero of=/dev/shm/ssd1.img bs=1024k count=1000
+losetup /dev/loop1 /dev/shm/ssd1.img
+
+/sbin/modprobe flashcache
+RETVAL=$?
+if [ RETVAL -ne 0 ]; then
+	echo "modprobe flashcache failed"
+	exit $RETVAL
+fi
+
+#create cachedev
+/sbin/flashcache_create $CACHEDEV_NAME -p $FLASHCACHE_MODE $SSD_DISK $BACKEND_DISK
+RETVAL=$?
+if [ $RETVAL -ne 0 ]; then
+	echo "flashcache create failed"
+	exit $RETVAL
+fi
+if [ -L /dev/mapper/$CACHEDEV_NAME ];then
+	/bin/mount /dev/mapper/$CACHEDEV_NAME  $MOUNTPOINT
+	RETVAL=$?
+	if [ $RETVAL -ne 0 ]; then
+		echo "mount failed"
+		exit $RETVAL
+	fi
+else
+	echo "$CACHEDEV_NAME not exist"
+	exit 1
+fi
+# create cachedev1
+/sbin/flashcache_create $CACHEDEV_NAME1 -p $FLASHCACHE_MODE1 $SSD_DISK1 $BACKEND_DISK1
+RETVAL=$?
+if [ $RETVAL -ne 0 ]; then
+	echo "flashcache create failed"
+	exit $RETVAL
+fi
+if [ -L /dev/mapper/$CACHEDEV_NAME1 ];then
+	/bin/mount /dev/mapper/$CACHEDEV_NAME1  $MOUNTPOINT1
+	RETVAL=$?
+	if [ $RETVAL -ne 0 ]; then
+		echo "mount failed"
+		exit $RETVAL
+	fi
+else
+	echo "$CACHEDEV_NAME1 not exist"
+	exit 1
+fi

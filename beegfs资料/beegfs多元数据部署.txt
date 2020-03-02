@@ -1,0 +1,192 @@
+
+parted -s /dev/sdb mklabel gpt;
+parted -s /dev/sdb mkpart primary xfs 1 10g;
+parted -s /dev/sdb mkpart primary xfs 11g 21g;
+parted -s /dev/sdb mkpart primary xfs 22g 32g;
+parted -s /dev/sdb mkpart primary xfs 33g 43g;
+parted -s /dev/sdb mkpart primary xfs 44g 54g;
+parted -s /dev/sdb mkpart primary xfs 55g 65g;
+parted -s /dev/sdb mkpart primary xfs 66g 107g;
+
+==============================================================================
+1.创建6个元数据分区和1个存储分区
+parted -s /dev/dfa mklabel gpt;
+parted -s /dev/dfa mkpart primary xfs 1 32G;
+parted -s /dev/dfa mkpart primary xfs 33G 65G;
+parted -s /dev/dfa mkpart primary xfs 66G 98G;
+parted -s /dev/dfa mkpart primary xfs 99G 131G;
+parted -s /dev/dfa mkpart primary xfs 132G 164G;
+parted -s /dev/dfa mkpart primary xfs 165G 197G;
+parted -s /dev/dfa mkpart primary xfs 198G 1600G;
+
+
+格式化所有分区
+for i in `seq 1 7`; do mkfs.xfs -f /dev/dfa${i}; done
+
+挂载元数据分区
+for i in `seq 1 6`; do mount /dev/dfa${i} /data/rcfs/rcfs_meta${i}; done
+
+清除元数据分区
+for i in `seq 1 6`; do rm -rf /data/rcfs/rcfs_meta${i}/*; done
+
+挂载存储分区
+mount /dev/dfa7 /data/rcfs/rcfs_data1
+mount /dev/dfb1 /data/rcfs/rcfs_data2
+mkdir /data/rcfs/rcfs_data2; 
+
+清除存储分区
+rm -rf /data/rcfs/rcfs_data1/*
+rm -rf /data/rcfs/rcfs_data2/*
+
+=====================================================================
+2.部署管理节点服务mgmtd
+mkdir -p /data/rcfs/rcfs_mgmtd
+/opt/rcfs/sbin/rcfs-setup-mgmtd -p /data/rcfs/rcfs_mgmtd
+systemctl start rcfs-mgmtd
+
+======================================================================
+3.部署元数据服务
+mkdir -p /data/rcfsmeta/rcfsmeta{1..6}
+
+mkdir -p /etc/rcfs/meta{1..6}.d
+
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta1.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta2.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta3.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta4.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta5.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta6.d/rcfs-meta.conf
+
+mkdir /etc/rcfs/meta{7..12}.d
+
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta7.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta8.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta9.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta10.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta11.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta12.d/rcfs-meta.conf
+
+mkdir /etc/rcfs/meta{13..18}.d
+
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta13.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta14.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta15.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta16.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta17.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta18.d/rcfs-meta.conf
+
+mkdir /etc/rcfs/meta{19..24}.d
+
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta19.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta20.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta21.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta22.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta23.d/rcfs-meta.conf
+cp -ra  /etc/rcfs/rcfs-meta.conf /etc/rcfs/meta24.d/rcfs-meta.conf
+
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta1 -c /etc/rcfs/meta1.d/rcfs-meta.conf -s 1 -S meta1 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta2 -c /etc/rcfs/meta2.d/rcfs-meta.conf -s 2 -S meta2 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta3 -c /etc/rcfs/meta3.d/rcfs-meta.conf -s 3 -S meta3 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta4 -c /etc/rcfs/meta4.d/rcfs-meta.conf -s 4 -S meta4 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta5 -c /etc/rcfs/meta5.d/rcfs-meta.conf -s 5 -S meta5 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta6 -c /etc/rcfs/meta6.d/rcfs-meta.conf -s 6 -S meta6 -m 66.66.66.239
+
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta1 -c /etc/rcfs/meta7.d/rcfs-meta.conf -s 7 -S meta7 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta2 -c /etc/rcfs/meta8.d/rcfs-meta.conf -s 8 -S meta8 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta3 -c /etc/rcfs/meta9.d/rcfs-meta.conf -s 9 -S meta9 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta4 -c /etc/rcfs/meta10.d/rcfs-meta.conf -s 10 -S meta10 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta5 -c /etc/rcfs/meta11.d/rcfs-meta.conf -s 11 -S meta11 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta6 -c /etc/rcfs/meta12.d/rcfs-meta.conf -s 12 -S meta12 -m 66.66.66.239
+
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta1 -c /etc/rcfs/meta13.d/rcfs-meta.conf -s 13 -S meta13 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta2 -c /etc/rcfs/meta14.d/rcfs-meta.conf -s 14 -S meta14 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta3 -c /etc/rcfs/meta15.d/rcfs-meta.conf -s 15 -S meta15 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta4 -c /etc/rcfs/meta16.d/rcfs-meta.conf -s 16 -S meta16 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta5 -c /etc/rcfs/meta17.d/rcfs-meta.conf -s 17 -S meta17 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta6 -c /etc/rcfs/meta18.d/rcfs-meta.conf -s 18 -S meta18 -m 66.66.66.239
+
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta1 -c /etc/rcfs/meta19.d/rcfs-meta.conf -s 19 -S meta19 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta2 -c /etc/rcfs/meta20.d/rcfs-meta.conf -s 20 -S meta20 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta3 -c /etc/rcfs/meta21.d/rcfs-meta.conf -s 21 -S meta21 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta4 -c /etc/rcfs/meta22.d/rcfs-meta.conf -s 22 -S meta22 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta5 -c /etc/rcfs/meta23.d/rcfs-meta.conf -s 23 -S meta23 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-meta -p /data/rcfs/rcfs_meta6 -c /etc/rcfs/meta24.d/rcfs-meta.conf -s 24 -S meta24 -m 66.66.66.239
+
+systemctl start rcfs-meta@meta1
+systemctl start rcfs-meta@meta2
+systemctl start rcfs-meta@meta3
+systemctl start rcfs-meta@meta4
+systemctl start rcfs-meta@meta5
+systemctl start rcfs-meta@meta6
+ps aux | grep meta
+
+systemctl start rcfs-meta@meta7
+systemctl start rcfs-meta@meta8
+systemctl start rcfs-meta@meta9
+systemctl start rcfs-meta@meta10
+systemctl start rcfs-meta@meta11
+systemctl start rcfs-meta@meta12
+ps aux | grep meta
+
+systemctl start rcfs-meta@meta13
+systemctl start rcfs-meta@meta14
+systemctl start rcfs-meta@meta15
+systemctl start rcfs-meta@meta16
+systemctl start rcfs-meta@meta17
+systemctl start rcfs-meta@meta18
+ps aux | grep meta
+
+systemctl start rcfs-meta@meta19
+systemctl start rcfs-meta@meta20
+systemctl start rcfs-meta@meta21
+systemctl start rcfs-meta@meta22
+systemctl start rcfs-meta@meta23
+systemctl start rcfs-meta@meta24
+ps aux | grep meta
+
+
+======================================================================
+4.部署存储服务
+mkdir -p /data/rcfs/rcfs_data1
+
+/opt/rcfs/sbin/rcfs-setup-storage -p /data/rcfs/rcfs_data1 -s 239 -i 1 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-storage -p /data/rcfs/rcfs_data2 -s 239 -i 5 -m 66.66.66.239
+
+/opt/rcfs/sbin/rcfs-setup-storage -p /data/rcfs/rcfs_data1 -s 248 -i 2 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-storage -p /data/rcfs/rcfs_data2 -s 248 -i 6 -m 66.66.66.239
+
+/opt/rcfs/sbin/rcfs-setup-storage -p /data/rcfs/rcfs_data1 -s 249 -i 3 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-storage -p /data/rcfs/rcfs_data2 -s 249 -i 7 -m 66.66.66.239
+
+/opt/rcfs/sbin/rcfs-setup-storage -p /data/rcfs/rcfs_data1 -s 250 -i 4 -m 66.66.66.239
+/opt/rcfs/sbin/rcfs-setup-storage -p /data/rcfs/rcfs_data2 -s 250 -i 8 -m 66.66.66.239
+
+
+
+
+
+systemctl start rcfs-storage
+
+=======================================================================
+5.部署客户端服务
+/opt/rcfs/sbin/rcfs-setup-client -m 66.66.66.239
+
+systemctl start rcfs-client
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,164 @@
+1.class program{
+	public: static int main(int argc, char **argv);
+}
+int program::main(int argc, char **argv)
+	1.1 buildtypetk::checkdebugbuildtypes() debug配置检查
+	1.2 abstractapp::runtimeinitsandchecks();
+		1.2.1 runtimechecks = performbasicinitialruntimechecks();
+			1.2.1.1 timetest = time::testclock; 测试时间
+			1.2.1.2 conditiontimetest = condition::testclockid();设置时钟属性
+		1.2.2 condition::initstaticcondattr()
+	1.3 app = new app(argc, argv);构造,初始化成员为null  //opt/beegfs/sbin/beegfs-mgmtd cfgFile=/etc/beegfs/beegfs-mgmtd.conf runDaemonized=false
+	1.4 app->startInCurrentThread()
+		1.4.1 threadID = GetCurrentThreadId();  
+		1.4.2 runStatic(Pthread *)
+		(gdb) p *currentThread
+			$10 = {_vptr.PThread = 0x5ab658 <vtable for App+16>, static nameOnceVar = 2, static nameKey = 2, static appOnceVar = 2, static appKey = 1, static currentThread = 0x7f28f0, threadName = "Main", threadApp = 0x7f28f0, addExePrefix = true, 
+			threadKernelNameOrig = "beegfs-mgmtd", threadID = 140737354045312, threadAttr = {__size = '\000' <repeats 17 times>, "\020", '\000' <repeats 37 times>, __align = 0}, priorityShift = 0, shallSelfTerminateAtomic = {atomicValue = 0}, shallSelfTerminate = false, 
+			selfTerminateMutex = {mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __nusers = 0, __kind = 0, __spins = 0, __elision = 0, __list = {__prev = 0x0, __next = 0x0}}, __size = '\000' <repeats 39 times>, __align = 0}}, shallSelfTerminateCond = {condition = {
+			__data = {__lock = 0, __futex = 0, __total_seq = 0, __wakeup_seq = 0, __woken_seq = 0, __mutex = 0x0, __nwaiters = 1, __broadcast_seq = 0}, __size = '\000' <repeats 40 times>, "\001\000\000\000\000\000\000", __align = 0}, static condAttr = {
+			__size = "\002\000\000", __align = 2}, static clockID = 1}} 
+
+			1.4.2.1 Pthread::currentThread = Pthread*;
+			1.4.2.2 setCurrentThreadName(currentThread->threadName) //Main
+					Pthread::nameOnceVar = PTHREAD_ONCE_INIT
+					pthread_key_create(nameKey,nameKeyDestructor) 设置全局线程都可访问的namekey,不同线程赋不同的值
+					if(nameValue = pthread_getspecific(nameKey))
+						nameValue = threadName;
+						pthread_setspecific(nameKey,nameValue);
+					else nameValue = threadName
+			1.4.2.3 setCurrentKernelThreadName(currentThread, threadName)
+			1.4.2.4 setCurrentThreadApp(currentThread->threadApp);//将线程全局appkey设置为currentThread->threadApp
+			$8 = (AbstractApp *) 0x7f28f0
+			(gdb) p *currentThread->threadApp
+				$9 = {<PThread> = {_vptr.PThread = 0x5ab658 <vtable for App+16>, static nameOnceVar = 2, static nameKey = 2, static appOnceVar = 2, static appKey = 1, static currentThread = 0x7f28f0, threadName = "Main", threadApp = 0x7f28f0, addExePrefix = true, 
+				threadKernelNameOrig = "beegfs-mgmtd", threadID = 140737354045312, threadAttr = {__size = '\000' <repeats 17 times>, "\020", '\000' <repeats 37 times>, __align = 0}, priorityShift = 0, shallSelfTerminateAtomic = {atomicValue = 0}, shallSelfTerminate = false, 
+				selfTerminateMutex = {mutex = {__data = {__lock = 0, __count = 0, __owner = 0, __nusers = 0, __kind = 0, __spins = 0, __elision = 0, __list = {__prev = 0x0, __next = 0x0}}, __size = '\000' <repeats 39 times>, __align = 0}}, shallSelfTerminateCond = {condition = {
+				__data = {__lock = 0, __futex = 0, __total_seq = 0, __wakeup_seq = 0, __woken_seq = 0, __mutex = 0x0, __nwaiters = 1, __broadcast_seq = 0}, __size = '\000' <repeats 40 times>, "\001\000\000\000\000\000\000", __align = 0}, static condAttr = {
+				__size = "\002\000\000", __align = 2}, static clockID = 1}}, static didRunTimeInit = true}
+			1.4.2.5 applyPriorityShift(currentThread->priorityShift) 
+			1.4.2.6 currentThread->run()  app.cpp-102
+				1.1 openlog("beegfs-mgmtd",)
+				1.2 runNormal()
+					1.2.1 initDataObjects() 检查cfg路径,并设置log， 初始化参数
+					1.2.n startComponents()
+						1.2.2.1 dgramListnener->start()
+							pthread_create(&threadID,NULL,&Pthread::runStatic,this) //创建线程
+							runStatic(void *arg)
+							Pthread::currentThread = Pthread *arg
+							run() == AbstractDatagramListener::run()
+								1.initBuffers()
+								2.listenLoop()
+									2.1 while(shallSelfTerminateAtomic.read() == 0)
+										2.1 standardSocket::recvfromT()
+											2.1.1 while(true)
+											2.1.2 epoll_wait(epollFD,&epollEvent)
+												if(epollEvent.event & EPOLLIN) && epollres > 0
+												2.1.2.1 recvfrom(buf)
+												::recvfrom(buf,fromaddr)
+													2.1.2.1.1 if(res>0)
+														stat->incVals.netRecvBytes += recvRes;
+										2.2 AbstractNetMessageFactory::createFromRaw(recvbuf,recvsize)//size>40
+											2.2.1 解码消息头
+											deserializeHeader(recvBuf,buflen,&header)
+											createFromPreprocessedBuf(&header,msgPayloadBuf,msgPayloadBuflen)
+												1.std::unique_ptr<NetMessage> msg(createFromMsgType(msgType))
+													1.1 假设是添加storage的消息则 case NETMSGTYPE_AddStoragePool: { msg = new AddStoragePoolMsgEx(); 
+												2.msg->setMsgHeaderFeatureFlags(header->msgFeatureFlags)
+												3.checkCompatRes = checkHeaderFeatureFlagsCompat()
+												4.解码消息 deserializePayload(msgPayloadBuf,msgPayloadBuflen)
+												return msg
+										2.3 handleIncomingMsg(&fromAddr, msg.get())		
+											2.3.1  "resgister node 消息类型说明"
+											2.3.2 msg->processIncoming(rctx)										
+							AbstractDatagramListener::listenLoop()
+							StandardSocket::recvfromT
+						1.2.2.2 heartbeatMgr->start()
+							runStatic(void *arg)
+							Pthread::currentThread = Pthread *arg
+							run() == HeartbeatManager::mgmtInit
+							1. AbstractDatagramListener::sendToNodesUDP(storageNodes)
+								nodes->referenceAllNodes()
+								NodeStoreServers::referenceAllNodes// 增加allnode到vector
+								调用重载referenceAllNodes()
+								1. while(!getSelfTerminate()&& numRetriesLeft--)
+									1.1 sendMsgToNode(node[i],msg);
+										1.1.1 msgBuf = createMsgVec(msg)
+											vector<char> result(2048)
+											1.1.1.1 serializeMessage(result[0],result.size)
+										1.1.2 sendBufToNode(node,msgBuf[0],msgBuf.size())
+											1. sendto(buf,buflen,0,ipaddr,portUDP)
+												1.1 standardSocket::sendto()转换地址in_addr为sockaddr
+													sendto();			
+									1.2 if(numRetriesLeft)// 当所有node都发送过消息后
+										1.2.1 waitForSelfTerminateOrder(retrySleepMS) //750ms 非循环等待
+											1.pthread_cond_timewait 超时退出
+							2. sendToNodesUDP(metaNodes)
+							3. sendToNodesUDP(clients)						
+						1.2.2.3 streamListener->start()
+							runStatic(void *arg)
+							run() == StreamListener::run()
+							StreamListener::listenLoop()
+								1.while(shallSelfTerminate.read() == 0)
+									1.1 epollres = epoll_wait()
+									1.2 for(i < epollres)
+										1.2.1 onIncomingData(currentEvent->data.ptr)
+											if(sock->getIsDirectWork())
+											addDirectWork(work) -- workList.push_back(work)
+											唤醒信号cond.signal()
+											pollList.removeByFD()
+											
+						1.2.2.4 statsCollector->start()
+							StatsCollector::run()
+							collectLoop()
+								1. while( !waitForSelfTerminateOrder(collectIntervalMS))  pthread_cond_timewait()条件唤醒时shallSelfTerminate被赋值，循环退出，否则返回false则循环继续
+									1.1 collectStats()
+										1.1.1 workQ->getAndResetStats(currentStats) memset为0
+										1.1.2 设置时间
+										1.1.3 statsList.push_front(currentStats)
+							
+						1.2.2.5 internodeSyncer->start()
+							run() == InternodeSyncer::run
+							InternodeSyncer::syncLoop()
+								1. while( !waitForSelfTerminateOrder(sleepIntervalMS)) 等待条件变量唤醒
+									1.1 mgmtdTargetStateStore->autoOfflineTargets()
+									1.2 mgmtdmetastatestore->autoofflinetargets()
+									1.3 mgmtdtargetstatestore->resolveprimaryResync()
+									1.4 mgmtdmetastatestore->resolveprimaryResync()
+									1.5 app->getheartbeatMgr()->notifyAsyncrefreshTargetStates()
+									1.6 savestates()
+									1.7 updateMetacapacityPools(poolsUpdateforce)
+									1.8 updateStorageCapacityPools(poolsUpdateforce)
+									1.9 saveTargetMapping()
+									2.0 dropIdleConns()
+						1.2.2.6 workersStart()
+							for(5--)
+								Worker::run()
+								workLoop(QueueWorkType_INDIRECT)
+								while(!getSelfTerminate()) work类型取决与 workType
+									1. work = waitForWorkByType(stats,workType)
+									2. work->process() 假设是getNodesWork
+										2.1 downloadNodes(*mgmtdNode, nodeType, nodesList, false)
+											2.1.1 requestResponse(&rrArgs)
+											commRes = requestResponseComm(rrArgs) //发一个请求消息给节点 并收到回应，rrArgs包含了发向的节点，请求消息，请求消息类型，如果成功收到的消息
+												1. connPool->acquireStreamSocket() 连接,返回链接的sock
+											2.1.2  接收消息 MessagingTk::recvMsgBuf(*sock, rrArgs->minTimeoutMS)
+												1. recvT(buf,len,flags,timeout)
+													1.1 epoll_wait(epollFD, epollEvent, 1 ,timeout)
+													if(epollEvent & EPOLLIN)
+														1.1.1 recv(buf, len, flag)
+															::recv(sock, buf, len, flags)
+												2. 提取消息给buf， extractMsgLengthFromBuf(&result[0], numReceived)
+											2.1.3 netMessageFactory->createFromBuf(std::move(resBuf))
+											
+								waitForWorkByType(stats, personalWorkQueue, workType)
+								waitForAnyWork(newStats, personalWorkQueue)
+								newWorkCond.wait(&mutex)
+								pthread_cond_wait(&condition, lockedMutex->getMutex() )
+gdb:
+	r cfgFile=/etc/beegfs/beegfs-mgmtd.conf runDaemonized=false
+	set scheduler-locking on 只有当前被调试的线程执行
+	b mgmtd/source/app/App.cpp:105  在currentThread->run中打断点
+	b PThread.h:295 thread all  所有过点的线程都打断点
+			
+	

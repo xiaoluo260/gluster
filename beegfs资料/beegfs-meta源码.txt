@@ -1,0 +1,16 @@
+/opt/beegfs/sbin/beegfs-meta cfgFile=/etc/beegfs/beegfs-meta.conf runDaemonized=false
+1.meta/source/...Main.cpp：return Program::main()
+2.checkDebugBuildTypes()
+3.runTimeInitsAndChecks()
+4.new app(argc, argc)
+5. startInCurrentThread()
+	5.1 GetCurrentThreadId()
+	5.2 runStatic
+		5.2.x currentThread->run()
+			new Config(argc,argv)
+			1. runNormal()
+				1.1 preinitStorage() 创建meta-dir并锁定
+				.....
+				1.2 downloadMgmtInfo() 注册meta，从mgmtd下载node，storage信息，更新自己的pool
+				1.3 
+					

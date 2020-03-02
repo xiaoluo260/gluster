@@ -1,0 +1,15 @@
+[Unit]
+Description=VCFS FLASHPLUG TASK.
+After=syslog.target
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/vcfs/vcfs-flashPlug/
+ExecStart=/opt/vcfs/vcfs-flashPlug/vcfs-flashPlug.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
