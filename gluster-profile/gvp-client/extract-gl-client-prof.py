@@ -103,10 +103,14 @@ def parse_input(input_pathname):
 
 # generate everything needed to view the graphs
 
-def generate_output():
+def generate_output(outfile):
 
-
-    print(intervals.bytes_read, intervals.bytes_written, intervals.read_iocall, intervals.write_iocall)
+    #print(tmp) 由输出终端改为输出文件
+    try:
+        with open(outfile, 'w') as file_handle:
+            file_handle.write(str(intervals.bytes_read)+',' +str(intervals.bytes_written)+',' +str(intervals.read_iocall)+',' +str(intervals.write_iocall))
+    except IOError:
+        usage('could not wirte ' + outfile)
 
         	
 
@@ -114,11 +118,12 @@ def generate_output():
 # the main program is kept in a subroutine so that it can run on Windows.
 
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         usage('missing gluster volume profile filename parameter'
               )
     fn = sys.argv[1]
     parse_input(fn)
-    generate_output()
+    outputfile = sys.argv[2]
+    generate_output(outputfile)
 
 main()

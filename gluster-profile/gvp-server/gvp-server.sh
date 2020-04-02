@@ -8,6 +8,8 @@
 
 volume_name=$1
 RETVAL=0
+outputfile=/var/tmp/server-result-${volume_name}
+
 if [ $# -lt 1 ]  ; then
   echo "usage: gvp-server.sh your-gluster-volume "
   exit 1
@@ -26,9 +28,9 @@ gluster volume profile $volume_name info > /tmp/past
 # generate samples  
 
 sleep $sample_interval
-gluster volume profile $volume_name info > /var/tmp/tmp-server.log ;RETVAL=$?
+gluster volume profile $volume_name info > /var/tmp/tmp-server-${volume_name}.log ;RETVAL=$?
 if [ $RETVAL -eq 0 ]; then
-  python extract-glvolprof.py /var/tmp/tmp-server.log
+  python extract-glvolprof.py /var/tmp/tmp-server-${volume_name}.log $outputfile
 fi
 
  

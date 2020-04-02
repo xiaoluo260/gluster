@@ -8,6 +8,8 @@
 
 volume_name=$1
 RETVAL=0
+outputfile=/var/tmp/cluster-result-${volume_name}
+
 
 if [ $# -lt 1 ]  ; then
   echo "usage: cluster-capacity.sh your-gluster-volume "
@@ -15,10 +17,10 @@ if [ $# -lt 1 ]  ; then
 fi
 
 
-gluster volume status  $volume_name detail > /var/tmp/tmp-capacity.log
+gluster volume status  $volume_name detail > /var/tmp/tmp-capacity-${volume_name}.log
 
 if [ $RETVAL -eq 0 ]; then
-  python extract-clustercapacity.py /var/tmp/tmp-capacity.log /var/lib/glusterd/vols/dis/info
+  python extract-clustercapacity.py /var/tmp/tmp-capacity-${volume_name}.log /var/lib/glusterd/vols/${volume_name}/info $outputfile
 fi
 
 

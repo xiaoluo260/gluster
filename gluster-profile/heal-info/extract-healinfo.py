@@ -72,21 +72,27 @@ def parse_input(input_pathname):
 
 # generate everything needed to view the graphs
 
-def generate_output():
+def generate_output(input_pathname):
 
     tmp = 0
     for brick_intervals in intervals:
         if brick_intervals.num_need_heal > tmp:
             tmp = brick_intervals.num_need_heal	
-    print(tmp)
+    #print(tmp) 由输出终端改为输出文件
+    try:
+        with open(input_pathname, 'w') as file_handle:
+            file_handle.write(str(tmp))
+    except IOError:
+        usage('could not wirte ' + input_pathname)
 
 
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         usage('missing gluster volume profile output log filename parameter')
     fn = sys.argv[1]
+    out = sys.argv[2]
     parse_input(fn)
-    generate_output()
+    generate_output(out)
 
 main()
 

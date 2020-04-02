@@ -107,7 +107,7 @@ def parse_input(input_pathname):
 
 # generate everything needed to view the graphs
 
-def generate_output():
+def generate_output(outfile):
 
     total_MB_read = 0
     total_MB_write = 0
@@ -115,19 +115,25 @@ def generate_output():
     total_IOPS_write = 0
     for brick_intervals in intervals:
         assert brick_intervals.duration or 0
+        total_MB_read = total_MB_read + brick_intervals.bytes_read
         total_MB_write = total_MB_write + brick_intervals.bytes_written
         total_IOPS_read = total_IOPS_read + brick_intervals.iocall_read/brick_intervals.duration
-        total_IOPS_write = total_IOPS_write + brick_intervals.iocall_write/brick_intervals.duration	
-    print(total_MB_read, total_MB_write, total_IOPS_read, total_IOPS_write)				
-
+        total_IOPS_write = total_IOPS_write + brick_intervals.iocall_write/brick_intervals.duration			
+    #print(tmp) 由输出终端改为输出文件
+    try:
+        with open(outfile, 'w') as file_handle:
+            file_handle.write(str(total_MB_read)+',' +str(total_MB_write)+',' +str(total_IOPS_read)+',' +str(total_IOPS_write))
+    except IOError:
+        usage('could not wirte ' + outfile)
         	
 
 def main():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 3:
         usage('missing gluster volume profile  filename parameter')
     fn = sys.argv[1]
+    outputfile = sys.argv[2]
     parse_input(fn)
-    generate_output()
+    generate_output(outputfile)
 
 main()
 

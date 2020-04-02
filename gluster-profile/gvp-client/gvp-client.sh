@@ -7,11 +7,10 @@
 # usage: 
 #  chmod u+x gvp-client.sh
 #  ./gvp-client.sh your-gluster-volume your-client-mountpoint 
-# output-file is optional, defaults to stdout
 #  bytes_read, bytes_written, read_iops, write_iops
 volume_name=$1
 mountpoint=$2
-
+outputfile=/var/tmp/client-result-${volume_name}
 
 RETVAL=0
 
@@ -31,10 +30,10 @@ sample_interval=1
 $sample_cmd /var/tmp/tmp-client.log $mountpoint
 
 sleep $sample_interval
-rm -f /var/tmp/tmp-client.log.dis
+rm -f /var/tmp/tmp-client.log.$volume_name
 $sample_cmd /var/tmp/tmp-client.log $mountpoint ; RETVAL=$?
 if [ $RETVAL -eq 0 ]; then
-  python extract-gl-client-prof.py /var/tmp/tmp-client.log.dis
+  python extract-gl-client-prof.py /var/tmp/tmp-client.log.$volume_name $outputfile
 fi
 
 
