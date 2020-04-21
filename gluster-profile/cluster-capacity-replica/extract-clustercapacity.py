@@ -30,8 +30,8 @@ class ProfileInterval:
 # convert gvp-client.sh client profile output
 # into a time series of per-fop results.
 def parse_vol_info(input_pathname):
-    global disperse_count
-    global disperse_data
+    global replica_count
+    global replica_data
     global bricks_dict
     try:
         with open(input_pathname, 'r') as file_handle:
@@ -43,10 +43,10 @@ def parse_vol_info(input_pathname):
         tokens = ln.strip().split("=")
         if ln.startswith('count'):
             total_brick = int(tokens[1])
-        elif ln.__contains__('disperse_count'):
-            disperse_count = int(tokens[1])
-        elif ln.__contains__('redundancy_count'):
-            disperse_data = disperse_count - int(tokens[1])
+        elif ln.__contains__('replica_count'):
+            replica_count = int(tokens[1])
+        elif ln.__contains__('arbiter_count'):
+            replica_data = replica_count - int(tokens[1])
         elif ln.startswith('brick'):
             brick_name = tokens[1].replace('-', '/')
             bricks_in_interval = ProfileInterval()
@@ -102,7 +102,7 @@ def generate_output(outfile):
     total_space = 0
     free_space = 0
     for brick_key, brick_class in bricks_dict.items():
-        if index < disperse_count:
+        if index < replica_data:
             if brick_class.space_disk and brick_class.space_free:
                 if tmp1 == 0:
                     tmp1 = brick_class.space_disk
@@ -113,17 +113,14 @@ def generate_output(outfile):
 
             index = index + 1
         else:
-            total_space = total_space + tmp1 * disperse_data
-            free_space = free_space + tmp2 * disperse_data
+            total_space = total_space + tmp1
+            free_space = free_space + tmp2
+            #仲裁盘容量不考虑
             if brick_class.space_disk and brick_class.space_free:
-                tmp1 = brick_class.space_disk
-                tmp2 = brick_class.space_free
-            else:
                 tmp1 = 0
                 tmp2 = 0
             index = 0
-    total_space = total_space + tmp1 * disperse_data
-    free_space = free_space + tmp2 * disperse_data
+
     #print(tmp) 由输出终端改为输出文件
     try:
         with open(outfile, 'w') as file_handle:
