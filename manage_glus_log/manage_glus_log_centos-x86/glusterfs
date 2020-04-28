@@ -2,7 +2,7 @@
 /var/log/glusterfs/*.log {
   sharedscripts
   weekly
-  rotate 52
+  rotate 20
   missingok
   compress
   delaycompress
@@ -17,7 +17,7 @@
 /var/log/glusterfs/bricks/*.log {
   sharedscripts
   weekly
-  rotate 52
+  rotate 20
   missingok
   compress
   delaycompress

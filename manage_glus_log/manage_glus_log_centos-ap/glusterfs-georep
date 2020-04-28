@@ -1,6 +1,6 @@
 /var/log/glusterfs/geo-replication/*/*.log {
     sharedscripts
-    rotate 52
+    rotate 20
     missingok
     compress
     delaycompress
@@ -15,7 +15,7 @@
 
 /var/log/glusterfs/geo-replication-slaves/*.log {
     sharedscripts
-    rotate 52
+    rotate 20
     missingok
     compress
     delaycompress
@@ -30,7 +30,7 @@
 
 /var/log/glusterfs/geo-replication-slaves/*/*.log {
     sharedscripts
-    rotate 52
+    rotate 20
     missingok
     compress
     delaycompress

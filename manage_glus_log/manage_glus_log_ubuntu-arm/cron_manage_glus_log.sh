@@ -1,11 +1,11 @@
 #!/bin/bash
 
-if [ ! -f /etc/logrotate.d/glusterfs ]; then
-    \cp -f glusterfs /etc/logrotate.d/glusterfs
-fi
-if [ ! -f /etc/logrotate.d/glusterfs-georep ]; then
-    \cp -f glusterfs-georep /etc/logrotate.d/glusterfs-georep
-fi
+#glusterfs-logrotate will save 52 logs, we modify to 20, force overwrite
+
+\cp -f glusterfs /etc/logrotate.d/glusterfs
+
+\cp -f glusterfs-georep /etc/logrotate.d/glusterfs-georep
+
 mkdir -p /opt/manage_glus_log
 \cp -f manage_glus_log.sh /opt/manage_glus_log/manage_glus_log.sh
 chmod +x /opt/manage_glus_log/manage_glus_log.sh
