@@ -33,6 +33,9 @@ def parse_vol_info(input_pathname):
     global disperse_count
     global disperse_data
     global bricks_dict
+    global replica_count
+    global replica_data
+
     try:
         with open(input_pathname, 'r') as file_handle:
             lines = [l.strip() for l in file_handle.readlines()]
@@ -47,6 +50,10 @@ def parse_vol_info(input_pathname):
             disperse_count = int(tokens[1])
         elif ln.__contains__('redundancy_count'):
             disperse_data = disperse_count - int(tokens[1])
+        elif ln.__contains__('replica_count'):
+            replica_count = int(tokens[1])
+        elif ln.__contains__('arbiter_count'):
+            replica_data = replica_count - int(tokens[1])
         elif ln.startswith('brick'):
             brick_name = tokens[1].replace('-', '/')
             bricks_in_interval = ProfileInterval()
@@ -54,7 +61,47 @@ def parse_vol_info(input_pathname):
     assert total_brick == len(bricks_dict)
 
 
-def parse_input(input_pathname):
+
+def parse_input_disperse(input_pathname):
+    try:
+        with open(input_pathname, 'r') as file_handle:
+            lines = [l.strip() for l in file_handle.readlines()]
+    except IOError:
+        usage('could not read ' + input_pathname)
+
+    found_brick_output = False
+
+    for ln in lines:
+        tokens = ln.strip().split()
+
+        if ln.startswith('Brick'):
+
+            brick_name = tokens[-1]
+            found_brick_output = True
+            bricks_in_interval = bricks_dict.get(brick_name)
+
+        elif ln.startswith('Disk'):
+
+            if found_brick_output:
+                # space_free = float(re.findall(r'\d+\.?\d*', tokens[-1])[0])
+                space = re.findall(r'\d+\.?\d*', tokens[-1])[0]
+                unit = tokens[-1].strip(space)
+                space_free = unit_converter(float(space), unit, "TB", 2)
+                bricks_in_interval.space_free = space_free
+
+        elif ln.startswith('Total'):
+
+            if found_brick_output:
+                # space_disk = float(re.findall(r'\d+\.?\d*', tokens[-1])[0])
+                # bricks_in_interval.space_disk = space_disk
+                space = re.findall(r'\d+\.?\d*', tokens[-1])[0]
+                unit = tokens[-1].strip(space)
+                space_total = unit_converter(float(space), unit, "TB", 2)
+                bricks_in_interval.space_disk = space_total
+                found_brick_output = False
+
+
+def parse_input_replica(input_pathname):
     try:
         with open(input_pathname, 'r') as file_handle:
             lines = [l.strip() for l in file_handle.readlines()]
@@ -95,7 +142,7 @@ def parse_input(input_pathname):
 
 # space_disk space_free
 
-def generate_output(outfile):
+def generate_output_disperse(outfile):
     tmp1 = 0
     tmp2 = 0
     index = 0
@@ -124,6 +171,41 @@ def generate_output(outfile):
             index = 0
     total_space = total_space + tmp1 * disperse_data
     free_space = free_space + tmp2 * disperse_data
+    #print(tmp) 由输出终端改为输出文件
+    try:
+        with open(outfile, 'w') as file_handle:
+            file_handle.write(str(total_space) +',' +str(free_space))
+    except IOError:
+        usage('could not wirte ' + outfile)
+
+
+# space_disk space_free
+def generate_output_replica(outfile):
+    tmp1 = 0
+    tmp2 = 0
+    index = 0
+    total_space = 0
+    free_space = 0
+    for brick_key, brick_class in bricks_dict.items():
+        if index < replica_data:
+            if brick_class.space_disk and brick_class.space_free:
+                if tmp1 == 0:
+                    tmp1 = brick_class.space_disk
+                    tmp2 = brick_class.space_free
+                elif tmp1 > brick_class.space_disk:
+                    tmp1 = brick_class.space_disk
+                    tmp2 = brick_class.space_free
+
+            index = index + 1
+        else:
+            total_space = total_space + tmp1
+            free_space = free_space + tmp2
+            #仲裁盘容量不考虑
+            if brick_class.space_disk and brick_class.space_free:
+                tmp1 = 0
+                tmp2 = 0
+            index = 0
+
     #print(tmp) 由输出终端改为输出文件
     try:
         with open(outfile, 'w') as file_handle:
@@ -187,8 +269,12 @@ def main():
     fn_vol = sys.argv[2]
     outputfile = sys.argv[3]
     parse_vol_info(fn_vol)
-    parse_input(fn)
-    generate_output(outputfile)
+    if disperse_count > 1:
+        parse_input_disperse(fn)
+        generate_output_disperse(outputfile)
+    else:
+        parse_input_replica(fn)
+        generate_output_replica(outputfile)
 
 
 main()
