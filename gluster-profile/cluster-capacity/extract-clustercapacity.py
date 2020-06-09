@@ -52,6 +52,7 @@ def parse_vol_info(input_pathname):
             disperse_data = disperse_count - int(tokens[1])
         elif ln.__contains__('replica_count'):
             replica_count = int(tokens[1])
+            replica_data = replica_count
         elif ln.__contains__('arbiter_count'):
             replica_data = replica_count - int(tokens[1])
         elif ln.startswith('brick'):
@@ -139,8 +140,15 @@ def parse_input_replica(input_pathname):
                 bricks_in_interval.space_disk = space_total
                 found_brick_output = False
 
-
 # space_disk space_free
+def write_to_outfile(total,free,outfile):
+    try:
+        with open(outfile, 'w') as file_handle:
+            file_handle.write(str(total) +',' +str(free))
+    except IOError:
+        usage('could not wirte ' + outfile)
+
+
 
 def generate_output_disperse(outfile):
     tmp1 = 0
@@ -172,14 +180,9 @@ def generate_output_disperse(outfile):
     total_space = total_space + tmp1 * disperse_data
     free_space = free_space + tmp2 * disperse_data
     #print(tmp) 由输出终端改为输出文件
-    try:
-        with open(outfile, 'w') as file_handle:
-            file_handle.write(str(total_space) +',' +str(free_space))
-    except IOError:
-        usage('could not wirte ' + outfile)
+    write_to_outfile(total_space,free_space,outfile)
 
 
-# space_disk space_free
 def generate_output_replica(outfile):
     tmp1 = 0
     tmp2 = 0
@@ -207,13 +210,37 @@ def generate_output_replica(outfile):
             index = 0
 
     #print(tmp) 由输出终端改为输出文件
-    try:
-        with open(outfile, 'w') as file_handle:
-            file_handle.write(str(total_space) +',' +str(free_space))
-    except IOError:
-        usage('could not wirte ' + outfile)
+    write_to_outfile(total_space,free_space,outfile)
 
+def generate_output_replica_noar(outfile):
+    tmp1 = 0
+    tmp2 = 0
+    index = 0
+    total_space = 0
+    free_space = 0
+    for brick_key, brick_class in bricks_dict.items():
+        if index < replica_data:
+            if brick_class.space_disk and brick_class.space_free:
+                if tmp1 == 0:
+                    tmp1 = brick_class.space_disk
+                    tmp2 = brick_class.space_free
+                elif tmp1 > brick_class.space_disk:
+                    tmp1 = brick_class.space_disk
+                    tmp2 = brick_class.space_free
 
+            index = index + 1
+        else:
+            total_space = total_space + tmp1
+            free_space = free_space + tmp2
+            #仲裁盘容量不考虑
+            if brick_class.space_disk and brick_class.space_free:
+                tmp1 = brick_class.space_disk
+                tmp2 = brick_class.space_free
+            index = 1
+    total_space = total_space + tmp1
+    free_space = free_space + tmp2
+    #print(tmp) 由输出终端改为输出文件
+    write_to_outfile(total_space,free_space,outfile)
 
 def unit_converter(float_value, unit_old, unit_new, num=2):
     """
@@ -272,9 +299,12 @@ def main():
     if disperse_count > 1:
         parse_input_disperse(fn)
         generate_output_disperse(outputfile)
-    else:
+    elif replica_count > replica_data:
         parse_input_replica(fn)
         generate_output_replica(outputfile)
+    elif replica_count == replica_data:
+        parse_input_replica(fn)
+        generate_output_replica_noar(outputfile)
 
 
 main()
