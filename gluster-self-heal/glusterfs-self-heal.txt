@@ -60,10 +60,10 @@ $6 = {name = 0x7fffe4002230 "vg0-client-0", type = 0x7fffe4002290 "protocol/clie
   mem_acct_init = 0x7fffea60be20 <mem_acct_init>, notify = 0x7fffea60b9c0 <notify>, loglevel = GF_LOG_NONE, latencies = {{min = 0, max = 0, total = 0, std = 0, mean = 0, 
       count = 0} <repeats 55 times>}, history = 0x0, ctx = 0x616010, graph = 0x7fffe4003f90, itable = 0x0, init_succeeded = 0 '\000', private = 0x0, mem_acct = 0x0, winds = 0, 
   switched = 0 '\000', local_pool = 0x0, is_autoloaded = _gf_false, volfile_id = 0x0, xl_id = 1}
- 2. ec_shd_full_healer()
+ 2. ec_shd_index_healer()
 	while(1)
 	2.1 ec_shd_healer_wait() 等待间隔，默认60
-	2.2 如果brick上线数 大于 数据盘数 开始
+	2.2 如果brick上线数 大于 数据盘数 开始ec_shd_index_sweep
 		2.2.1 ec_shd_selfheal()->syncop_getxattr(healer->this, loc, NULL, EC_XATTR_HEAL, NULL, NULL))->SYNCOP()->fops->getxattr
 		2.2.2 ec_shd_full_sweep (healer, this->itable->root)->syncop_ftw()
 		
