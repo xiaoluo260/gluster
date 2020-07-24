@@ -63,9 +63,13 @@ $6 = {name = 0x7fffe4002230 "vg0-client-0", type = 0x7fffe4002290 "protocol/clie
  2. ec_shd_index_healer()
 	while(1)
 	2.1 ec_shd_healer_wait() 等待间隔，默认60
-	2.2 如果brick上线数 大于 数据盘数 开始ec_shd_index_sweep
-		2.2.1 ec_shd_selfheal()->syncop_getxattr(healer->this, loc, NULL, EC_XATTR_HEAL, NULL, NULL))->SYNCOP()->fops->getxattr
-		2.2.2 ec_shd_full_sweep (healer, this->itable->root)->syncop_ftw()
+	2.2 如果brick上线数 大于 数据盘数 开始ec_shd_index_sweep   
+		
+		2.2.1 ec_shd_index_inode  
+			syncop_lookup -> syncop_opendir -> syncop_readdir(获取到xattrop下的文件)-> syncop_getxattr
+		2.2.2 syncop_mt_dir_scan ->ec_shd_index_heal   开始执行具体修复
+			ec_shd_index_heal -> syncop_getxattr -> ec_gf_getxattr -> ec_getxattr
+			cluster_lookup ->  client3_3_inodelk  非修复节点则 client3_3_inodelk_cbk返回失败remote operation failed[resource temporarily unavailable]
 		
 		
 ***************************************************
