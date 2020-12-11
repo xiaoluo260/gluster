@@ -1,0 +1,12 @@
+[Unit]
+Description=FILE_LIFE_CYCLE service
+After=network.target
+
+[Service]
+Type=simple
+
+ExecStart=/opt/vcfs/vcmp/bin/python /opt/file_life_cycle/src/run.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
